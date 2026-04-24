@@ -1,7 +1,12 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var playerWindowController: PlayerWindowController?
+    private let openRecentMenu = NSMenu(title: "Open Recent")
+
+    private var playerViewController: PlayerViewController? {
+        playerWindowController?.playerViewController
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = PlayerWindowController()
@@ -20,59 +25,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openDocument(_ sender: Any?) {
-        playerWindowController?.playerViewController.openFilesPanel(replacePlaylist: true)
+        playerViewController?.openFilesPanel(replacePlaylist: true)
     }
 
     @objc private func addToPlaylist(_ sender: Any?) {
-        playerWindowController?.playerViewController.openFilesPanel(replacePlaylist: false)
+        playerViewController?.openFilesPanel(replacePlaylist: false)
     }
 
     @objc private func openNetworkStream(_ sender: Any?) {
-        playerWindowController?.playerViewController.openNetworkStreamDialog(sender)
+        playerViewController?.openNetworkStreamDialog(sender)
+    }
+
+    @objc private func openRecentItem(_ sender: NSMenuItem) {
+        playerViewController?.openRecentMedia(at: sender.tag)
+    }
+
+    @objc private func clearRecentMedia(_ sender: Any?) {
+        playerViewController?.clearRecentMedia()
+    }
+
+    @objc private func addLibraryFolder(_ sender: Any?) {
+        playerViewController?.chooseLibraryFolder(sender)
+    }
+
+    @objc private func loadLibraryFolders(_ sender: Any?) {
+        playerViewController?.loadLibraryFolders(sender)
     }
 
     @objc private func loadSubtitle(_ sender: Any?) {
-        playerWindowController?.playerViewController.openSubtitlePanel(sender)
+        playerViewController?.openSubtitlePanel(sender)
     }
 
     @objc private func togglePlayback(_ sender: Any?) {
-        playerWindowController?.playerViewController.togglePlayPause(sender)
+        playerViewController?.togglePlayPause(sender)
     }
 
     @objc private func seekBackward(_ sender: Any?) {
-        playerWindowController?.playerViewController.seekBackward(sender)
+        playerViewController?.seekBackward(sender)
     }
 
     @objc private func seekForward(_ sender: Any?) {
-        playerWindowController?.playerViewController.seekForward(sender)
+        playerViewController?.seekForward(sender)
     }
 
     @objc private func playPrevious(_ sender: Any?) {
-        playerWindowController?.playerViewController.playPrevious(sender)
+        playerViewController?.playPrevious(sender)
     }
 
     @objc private func playNext(_ sender: Any?) {
-        playerWindowController?.playerViewController.playNext(sender)
+        playerViewController?.playNext(sender)
     }
 
     @objc private func volumeUp(_ sender: Any?) {
-        playerWindowController?.playerViewController.volumeUp(sender)
+        playerViewController?.volumeUp(sender)
     }
 
     @objc private func volumeDown(_ sender: Any?) {
-        playerWindowController?.playerViewController.volumeDown(sender)
+        playerViewController?.volumeDown(sender)
     }
 
     @objc private func toggleMute(_ sender: Any?) {
-        playerWindowController?.playerViewController.toggleMute(sender)
+        playerViewController?.toggleMute(sender)
+    }
+
+    @objc private func takeScreenshot(_ sender: Any?) {
+        playerViewController?.takeScreenshot(sender)
+    }
+
+    @objc private func setLoopStart(_ sender: Any?) {
+        playerViewController?.setLoopStart(sender)
+    }
+
+    @objc private func setLoopEnd(_ sender: Any?) {
+        playerViewController?.setLoopEnd(sender)
+    }
+
+    @objc private func clearLoop(_ sender: Any?) {
+        playerViewController?.clearLoop(sender)
+    }
+
+    @objc private func applyAudioPreset(_ sender: NSMenuItem) {
+        let presetName = (sender.representedObject as? String) ?? sender.title
+        playerViewController?.applyAudioPreset(named: presetName)
     }
 
     @objc private func toggleSidebar(_ sender: Any?) {
-        playerWindowController?.playerViewController.toggleSidebar(sender)
+        playerViewController?.toggleSidebar(sender)
+    }
+
+    @objc private func toggleMiniPlayer(_ sender: Any?) {
+        playerViewController?.toggleMiniPlayer(sender)
+    }
+
+    @objc private func togglePictureInPicture(_ sender: Any?) {
+        playerViewController?.togglePictureInPicture(sender)
+    }
+
+    @objc private func toggleTheaterMode(_ sender: Any?) {
+        playerViewController?.toggleTheaterMode(sender)
     }
 
     @objc private func toggleFullscreen(_ sender: Any?) {
         playerWindowController?.window?.toggleFullScreen(sender)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === openRecentMenu else { return }
+        rebuildOpenRecentMenu()
     }
 
     private func buildMainMenu() {
@@ -92,9 +151,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addItem.target = self
         fileMenu.addItem(openItem)
         fileMenu.addItem(addItem)
+
+        let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        openRecentMenu.delegate = self
+        recentItem.submenu = openRecentMenu
+        fileMenu.addItem(recentItem)
+
         let networkItem = NSMenuItem(title: "Open Network Stream...", action: #selector(openNetworkStream(_:)), keyEquivalent: "n")
         networkItem.target = self
         fileMenu.addItem(networkItem)
+        fileMenu.addItem(.separator())
+        let addLibraryItem = NSMenuItem(title: "Add Library Folder...", action: #selector(addLibraryFolder(_:)), keyEquivalent: "l")
+        addLibraryItem.keyEquivalentModifierMask = [.command, .option]
+        addLibraryItem.target = self
+        fileMenu.addItem(addLibraryItem)
+        let loadLibraryItem = NSMenuItem(title: "Load Library Folders", action: #selector(loadLibraryFolders(_:)), keyEquivalent: "l")
+        loadLibraryItem.target = self
+        fileMenu.addItem(loadLibraryItem)
         fileMenu.addItem(.separator())
         let subtitleItem = NSMenuItem(title: "Load Subtitle...", action: #selector(loadSubtitle(_:)), keyEquivalent: "s")
         subtitleItem.target = self
@@ -116,12 +189,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         playbackMenu.addItem(NSMenuItem(title: "Volume Up", action: #selector(volumeUp(_:)), keyEquivalent: "\u{2191}"))
         playbackMenu.addItem(NSMenuItem(title: "Volume Down", action: #selector(volumeDown(_:)), keyEquivalent: "\u{2193}"))
         playbackMenu.addItem(NSMenuItem(title: "Mute", action: #selector(toggleMute(_:)), keyEquivalent: "m"))
+        playbackMenu.addItem(.separator())
+        playbackMenu.addItem(NSMenuItem(title: "Take Screenshot", action: #selector(takeScreenshot(_:)), keyEquivalent: "p"))
+        playbackMenu.addItem(.separator())
+        playbackMenu.addItem(NSMenuItem(title: "Set Loop Start", action: #selector(setLoopStart(_:)), keyEquivalent: "a"))
+        playbackMenu.addItem(NSMenuItem(title: "Set Loop End", action: #selector(setLoopEnd(_:)), keyEquivalent: "b"))
+        let clearLoopItem = NSMenuItem(title: "Clear Loop", action: #selector(clearLoop(_:)), keyEquivalent: "b")
+        clearLoopItem.keyEquivalentModifierMask = [.command, .shift]
+        playbackMenu.addItem(clearLoopItem)
+        playbackMenu.addItem(.separator())
+        playbackMenu.addItem(makeAudioPresetMenuItem())
         playbackMenu.items.forEach { $0.target = self }
         playbackMenuItem.submenu = playbackMenu
         mainMenu.addItem(playbackMenuItem)
 
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
+        let miniItem = NSMenuItem(title: "Mini Player", action: #selector(toggleMiniPlayer(_:)), keyEquivalent: "m")
+        miniItem.keyEquivalentModifierMask = [.command, .option]
+        miniItem.target = self
+        viewMenu.addItem(miniItem)
+        let pipItem = NSMenuItem(title: "Picture in Picture", action: #selector(togglePictureInPicture(_:)), keyEquivalent: "p")
+        pipItem.keyEquivalentModifierMask = [.command, .option]
+        pipItem.target = self
+        viewMenu.addItem(pipItem)
+        let theaterItem = NSMenuItem(title: "Theater Mode", action: #selector(toggleTheaterMode(_:)), keyEquivalent: "t")
+        theaterItem.keyEquivalentModifierMask = [.command, .option]
+        theaterItem.target = self
+        viewMenu.addItem(theaterItem)
+        viewMenu.addItem(.separator())
         let sidebarItem = NSMenuItem(title: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
         sidebarItem.keyEquivalentModifierMask = [.command, .option]
         sidebarItem.target = self
@@ -135,5 +231,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(viewMenuItem)
 
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    private func rebuildOpenRecentMenu() {
+        openRecentMenu.removeAllItems()
+        let items = playerViewController?.recentMediaItems() ?? []
+
+        guard !items.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No Recent Media", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            openRecentMenu.addItem(emptyItem)
+            return
+        }
+
+        for (index, item) in items.enumerated() {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(openRecentItem(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.tag = index
+            menuItem.toolTip = item.isNetworkStream ? item.url.absoluteString : item.url.path
+            openRecentMenu.addItem(menuItem)
+        }
+
+        openRecentMenu.addItem(.separator())
+        let clearItem = NSMenuItem(title: "Clear Menu", action: #selector(clearRecentMedia(_:)), keyEquivalent: "")
+        clearItem.target = self
+        openRecentMenu.addItem(clearItem)
+    }
+
+    private func makeAudioPresetMenuItem() -> NSMenuItem {
+        let menu = NSMenu(title: "Audio Preset")
+        for preset in AudioPreset.allCases {
+            let item = NSMenuItem(title: preset.rawValue, action: #selector(applyAudioPreset(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.rawValue
+            menu.addItem(item)
+        }
+
+        let parent = NSMenuItem(title: "Audio Preset", action: nil, keyEquivalent: "")
+        parent.submenu = menu
+        return parent
     }
 }

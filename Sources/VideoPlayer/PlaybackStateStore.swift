@@ -7,6 +7,9 @@ final class PlaybackStateStore {
         static let positions = "positions"
         static let volume = "volume"
         static let speed = "speed"
+        static let recentMedia = "recentMedia"
+        static let libraryFolders = "libraryFolders"
+        static let audioPreset = "audioPreset"
     }
 
     private let defaults: UserDefaults
@@ -49,6 +52,53 @@ final class PlaybackStateStore {
 
     func loadSpeedTitle() -> String? {
         defaults.string(forKey: Key.speed)
+    }
+
+    func saveAudioPreset(_ preset: String) {
+        defaults.set(preset, forKey: Key.audioPreset)
+    }
+
+    func loadAudioPreset() -> String? {
+        defaults.string(forKey: Key.audioPreset)
+    }
+
+    func addRecentMedia(_ item: MediaItem) {
+        var values = defaults.stringArray(forKey: Key.recentMedia) ?? []
+        values.removeAll { $0 == item.url.absoluteString }
+        values.insert(item.url.absoluteString, at: 0)
+        defaults.set(Array(values.prefix(12)), forKey: Key.recentMedia)
+    }
+
+    func loadRecentMedia() -> [MediaItem] {
+        (defaults.stringArray(forKey: Key.recentMedia) ?? []).compactMap { value in
+            guard let url = URL(string: value) else { return nil }
+            if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
+                return nil
+            }
+            return MediaItem(url: url)
+        }
+    }
+
+    func clearRecentMedia() {
+        defaults.removeObject(forKey: Key.recentMedia)
+    }
+
+    func addLibraryFolder(_ url: URL) {
+        var values = defaults.stringArray(forKey: Key.libraryFolders) ?? []
+        values.removeAll { $0 == url.absoluteString }
+        values.insert(url.absoluteString, at: 0)
+        defaults.set(Array(values.prefix(8)), forKey: Key.libraryFolders)
+    }
+
+    func loadLibraryFolders() -> [URL] {
+        (defaults.stringArray(forKey: Key.libraryFolders) ?? []).compactMap { value in
+            guard let url = URL(string: value), url.isFileURL else { return nil }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                return nil
+            }
+            return url
+        }
     }
 
     func position(for item: MediaItem) -> Double {

@@ -30,6 +30,14 @@ final class PlayerViewController: NSViewController {
     private var volumeBeforeMute = 70.0
     private var codecTickCount = 0
     private var isUpdatingTrackMenus = false
+    private var loopStart: Double?
+    private var loopEnd: Double?
+    private var currentAudioPreset: AudioPreset = .flat
+    private var isMiniPlayer = false
+    private var isTheaterMode = false
+    private var savedWindowFrame: NSRect?
+    private var savedWindowLevel: NSWindow.Level = .normal
+    private var metadataRequestID = 0
 
     private let playerView = AVPlayerView()
     private let vlcVideoSurface = NSView()
@@ -38,6 +46,7 @@ final class PlayerViewController: NSViewController {
     private var sidebarWidthConstraint: NSLayoutConstraint?
     private weak var playerAreaView: NSView?
     private let tableView = NSTableView()
+    private let metadataTextView = NSTextField(labelWithString: "Select a media item to inspect it before playback.")
     private let emptyStateLabel = NSTextField(labelWithString: "Drop media files here or open a file")
     private let hudLabel = NSTextField(labelWithString: "")
     private let nowPlayingLabel = NSTextField(labelWithString: "Ready")
@@ -51,6 +60,7 @@ final class PlayerViewController: NSViewController {
     private let volumeLabel = NSTextField(labelWithString: "70%")
     private let speedPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let audioTrackPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let audioPresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let subtitleTrackPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let subtitleDelayStepper = NSStepper()
     private let subtitleDelayLabel = NSTextField(labelWithString: "0.0s")
@@ -97,11 +107,11 @@ final class PlayerViewController: NSViewController {
         panel.resolvesAliases = true
 
         guard panel.runModal() == .OK else { return }
-        addMedia(from: panel.urls, replacePlaylist: replacePlaylist)
+        addMedia(from: panel.urls, replacePlaylist: replacePlaylist, autoplay: false)
     }
 
     func openMedia(_ urls: [URL], replacePlaylist: Bool) {
-        addMedia(from: urls, replacePlaylist: replacePlaylist)
+        addMedia(from: urls, replacePlaylist: replacePlaylist, autoplay: false)
     }
 
     @objc func openNetworkStreamDialog(_ sender: Any? = nil) {
@@ -122,7 +132,7 @@ final class PlayerViewController: NSViewController {
             return
         }
 
-        addMediaItems([MediaItem(url: url)], replacePlaylist: playlist.isEmpty)
+        addMediaItems([MediaItem(url: url)], replacePlaylist: playlist.isEmpty, autoplay: false)
     }
 
     @objc func openSubtitlePanel(_ sender: Any? = nil) {
@@ -136,6 +146,136 @@ final class PlayerViewController: NSViewController {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         loadSubtitle(url)
+    }
+
+    func recentMediaItems() -> [MediaItem] {
+        stateStore.loadRecentMedia()
+    }
+
+    func openRecentMedia(at index: Int) {
+        let items = stateStore.loadRecentMedia()
+        guard items.indices.contains(index) else { return }
+        addMediaItems([items[index]], replacePlaylist: true, autoplay: false)
+        showHUD("Recent item loaded")
+    }
+
+    func clearRecentMedia() {
+        stateStore.clearRecentMedia()
+        showHUD("Recent files cleared")
+    }
+
+    @objc func chooseLibraryFolder(_ sender: Any? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Add Library Folder"
+        panel.message = "Choose a folder to scan for media."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        stateStore.addLibraryFolder(url)
+        addMedia(from: [url], replacePlaylist: playlist.isEmpty, autoplay: false)
+        showHUD("Library folder added")
+    }
+
+    @objc func loadLibraryFolders(_ sender: Any? = nil) {
+        let folders = stateStore.loadLibraryFolders()
+        guard !folders.isEmpty else {
+            chooseLibraryFolder(sender)
+            return
+        }
+        addMedia(from: folders, replacePlaylist: true, autoplay: false)
+        showHUD("Library loaded")
+    }
+
+    @objc func toggleMiniPlayer(_ sender: Any? = nil) {
+        guard let window = view.window else { return }
+        if isMiniPlayer {
+            if let savedWindowFrame {
+                window.setFrame(savedWindowFrame, display: true, animate: true)
+            }
+            window.level = savedWindowLevel
+            isMiniPlayer = false
+            showHUD("Mini player off")
+        } else {
+            savedWindowFrame = window.frame
+            savedWindowLevel = window.level
+            window.level = .floating
+            let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
+            let size = NSSize(width: 520, height: 320)
+            let origin = NSPoint(x: screenFrame.maxX - size.width - 24, y: screenFrame.minY + 24)
+            window.setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+            if sidebarView?.isHidden == false {
+                toggleSidebar(nil)
+            }
+            isMiniPlayer = true
+            showHUD("Mini player")
+        }
+    }
+
+    @objc func toggleTheaterMode(_ sender: Any? = nil) {
+        isTheaterMode.toggle()
+        if isTheaterMode, sidebarView?.isHidden == false {
+            toggleSidebar(nil)
+        }
+        showHUD(isTheaterMode ? "Theater mode" : "Theater mode off")
+    }
+
+    @objc func togglePictureInPicture(_ sender: Any? = nil) {
+        toggleMiniPlayer(sender)
+        showHUD("Floating player")
+    }
+
+    @objc func takeScreenshot(_ sender: Any? = nil) {
+        guard currentItem != nil else {
+            showHUD("No video frame")
+            return
+        }
+
+        do {
+            let url = try nextScreenshotURL()
+            switch currentEngine {
+            case .vlc:
+                if vlcBridge.takeSnapshot(to: url) {
+                    showHUD("Screenshot saved")
+                } else {
+                    showHUD("Screenshot failed")
+                }
+            case .native:
+                try takeNativeScreenshot(to: url)
+                showHUD("Screenshot saved")
+            case .mpv, .none:
+                showHUD("Screenshot unavailable")
+            }
+        } catch {
+            showHUD("Screenshot failed")
+        }
+    }
+
+    @objc func setLoopStart(_ sender: Any? = nil) {
+        loopStart = currentPlaybackTime()
+        showHUD("Loop A \(formatTime(loopStart ?? 0))")
+    }
+
+    @objc func setLoopEnd(_ sender: Any? = nil) {
+        loopEnd = currentPlaybackTime()
+        if let loopStart, let loopEnd, loopEnd <= loopStart {
+            self.loopEnd = nil
+            showHUD("Loop B must be after A")
+        } else {
+            showHUD("Loop B \(formatTime(loopEnd ?? 0))")
+        }
+    }
+
+    @objc func clearLoop(_ sender: Any? = nil) {
+        loopStart = nil
+        loopEnd = nil
+        showHUD("Loop cleared")
+    }
+
+    func applyAudioPreset(named name: String) {
+        guard let preset = AudioPreset(rawValue: name) else { return }
+        applyAudioPreset(preset)
     }
 
     @objc func togglePlayPause(_ sender: Any?) {
@@ -225,9 +365,13 @@ final class PlayerViewController: NSViewController {
         stopPlayback()
         playlist.removeAll()
         currentIndex = nil
+        loopStart = nil
+        loopEnd = nil
         tableView.reloadData()
         updateEmptyState()
         updateNowPlaying(title: "Ready", detail: "")
+        metadataRequestID += 1
+        metadataTextView.stringValue = "Select a media item to inspect it before playback."
         savePlaylistState()
     }
 
@@ -267,6 +411,10 @@ final class PlayerViewController: NSViewController {
         if vlcBridge.selectAudioTrack(id: id) {
             showHUD("Audio: \(sender.selectedItem?.title ?? "Track")")
         }
+    }
+
+    @objc private func audioPresetChanged(_ sender: NSPopUpButton) {
+        applyAudioPreset(named: sender.selectedItem?.title ?? AudioPreset.flat.rawValue)
     }
 
     @objc private func subtitleTrackChanged(_ sender: NSPopUpButton) {
@@ -352,8 +500,27 @@ final class PlayerViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
 
+        let metadataPanel = NSVisualEffectView()
+        metadataPanel.translatesAutoresizingMaskIntoConstraints = false
+        metadataPanel.material = .underWindowBackground
+        metadataPanel.blendingMode = .withinWindow
+
+        let metadataTitle = NSTextField(labelWithString: "Inspector")
+        metadataTitle.translatesAutoresizingMaskIntoConstraints = false
+        metadataTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        metadataTextView.translatesAutoresizingMaskIntoConstraints = false
+        metadataTextView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        metadataTextView.textColor = .secondaryLabelColor
+        metadataTextView.maximumNumberOfLines = 12
+        metadataTextView.lineBreakMode = .byTruncatingMiddle
+
+        metadataPanel.addSubview(metadataTitle)
+        metadataPanel.addSubview(metadataTextView)
+
         container.addSubview(header)
         container.addSubview(scrollView)
+        container.addSubview(metadataPanel)
 
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
@@ -363,7 +530,21 @@ final class PlayerViewController: NSViewController {
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            scrollView.bottomAnchor.constraint(equalTo: metadataPanel.topAnchor),
+
+            metadataPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            metadataPanel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            metadataPanel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            metadataPanel.heightAnchor.constraint(equalToConstant: 210),
+
+            metadataTitle.leadingAnchor.constraint(equalTo: metadataPanel.leadingAnchor, constant: 14),
+            metadataTitle.trailingAnchor.constraint(equalTo: metadataPanel.trailingAnchor, constant: -14),
+            metadataTitle.topAnchor.constraint(equalTo: metadataPanel.topAnchor, constant: 12),
+
+            metadataTextView.leadingAnchor.constraint(equalTo: metadataPanel.leadingAnchor, constant: 14),
+            metadataTextView.trailingAnchor.constraint(equalTo: metadataPanel.trailingAnchor, constant: -14),
+            metadataTextView.topAnchor.constraint(equalTo: metadataTitle.bottomAnchor, constant: 8),
+            metadataTextView.bottomAnchor.constraint(lessThanOrEqualTo: metadataPanel.bottomAnchor, constant: -12)
         ])
 
         return container
@@ -572,7 +753,14 @@ final class PlayerViewController: NSViewController {
         audioTrackPopup.target = self
         audioTrackPopup.action = #selector(audioTrackChanged(_:))
         audioTrackPopup.toolTip = "Audio track"
-        audioTrackPopup.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        audioTrackPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
+
+        audioPresetPopup.addItems(withTitles: AudioPreset.allCases.map(\.rawValue))
+        audioPresetPopup.selectItem(withTitle: currentAudioPreset.rawValue)
+        audioPresetPopup.target = self
+        audioPresetPopup.action = #selector(audioPresetChanged(_:))
+        audioPresetPopup.toolTip = "Audio preset"
+        audioPresetPopup.widthAnchor.constraint(equalToConstant: 132).isActive = true
 
         subtitleTrackPopup.target = self
         subtitleTrackPopup.action = #selector(subtitleTrackChanged(_:))
@@ -604,6 +792,7 @@ final class PlayerViewController: NSViewController {
         let stack = NSStackView(views: [
             audioIcon,
             audioTrackPopup,
+            audioPresetPopup,
             subtitleIcon,
             subtitleTrackPopup,
             loadSubtitleButton,
@@ -714,7 +903,7 @@ final class PlayerViewController: NSViewController {
         return playerAreaView.bounds.contains(location)
     }
 
-    private func addMedia(from urls: [URL], replacePlaylist: Bool) {
+    private func addMedia(from urls: [URL], replacePlaylist: Bool, autoplay: Bool) {
         let subtitleURLs = urls.filter(isSubtitleFile)
         let items = urls
             .flatMap(mediaURLs(from:))
@@ -729,16 +918,16 @@ final class PlayerViewController: NSViewController {
             return
         }
 
-        addMediaItems(items, replacePlaylist: replacePlaylist)
+        addMediaItems(items, replacePlaylist: replacePlaylist, autoplay: autoplay)
 
-        if let subtitleURL = subtitleURLs.first {
+        if autoplay, let subtitleURL = subtitleURLs.first {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.loadSubtitle(subtitleURL)
             }
         }
     }
 
-    private func addMediaItems(_ items: [MediaItem], replacePlaylist: Bool) {
+    private func addMediaItems(_ items: [MediaItem], replacePlaylist: Bool, autoplay: Bool) {
         if replacePlaylist {
             stopPlayback()
             playlist = items
@@ -751,8 +940,11 @@ final class PlayerViewController: NSViewController {
         updateEmptyState()
         savePlaylistState()
 
-        if currentIndex == nil {
+        if currentIndex == nil, autoplay {
             playItem(at: replacePlaylist ? 0 : playlist.count - items.count)
+        } else if currentIndex == nil {
+            let index = replacePlaylist ? 0 : playlist.count - items.count
+            selectItemForInspection(at: index)
         }
     }
 
@@ -794,6 +986,8 @@ final class PlayerViewController: NSViewController {
         tableView.scrollRowToVisible(index)
 
         let item = playlist[index]
+        stateStore.addRecentMedia(item)
+        updateMetadata(for: item)
         updateNowPlaying(title: item.title, detail: item.subtitle)
         let resumeTime = promptedResumeTime(for: item)
 
@@ -858,6 +1052,9 @@ final class PlayerViewController: NSViewController {
             engineLabel.stringValue = "Playing in-app with VLC codec engine"
             startCodecTimer()
             applyResumeTime(resumeTime)
+            if currentAudioPreset != .flat {
+                _ = vlcBridge.applyAudioPreset(currentAudioPreset)
+            }
             autoLoadSidecarSubtitle(for: item)
             scheduleTrackMenuRefresh()
         } catch {
@@ -965,6 +1162,31 @@ final class PlayerViewController: NSViewController {
         showHUD(seconds > 0 ? "+\(seconds)s" : "\(seconds)s")
     }
 
+    private func currentPlaybackTime() -> Double {
+        switch currentEngine {
+        case .native:
+            avPlayer.currentTime().seconds
+        case .vlc:
+            vlcBridge.currentTime
+        case .mpv, .none:
+            0
+        }
+    }
+
+    private func enforceLoopIfNeeded(_ currentSeconds: Double) {
+        guard let loopStart, let loopEnd, loopEnd > loopStart, currentSeconds >= loopEnd else { return }
+        switch currentEngine {
+        case .native:
+            avPlayer.seek(to: CMTime(seconds: loopStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        case .vlc:
+            vlcBridge.setTime(loopStart)
+        case .mpv:
+            mpvBridge.setTime(loopStart)
+        case .none:
+            break
+        }
+    }
+
     private func playbackRateFromSelection() -> Double {
         let title = speedPopup.selectedItem?.title.replacingOccurrences(of: "x", with: "") ?? "1"
         return Double(title) ?? 1
@@ -994,6 +1216,41 @@ final class PlayerViewController: NSViewController {
         }
     }
 
+    private func applyAudioPreset(_ preset: AudioPreset) {
+        currentAudioPreset = preset
+        stateStore.saveAudioPreset(preset.rawValue)
+        audioPresetPopup.selectItem(withTitle: preset.rawValue)
+        if currentEngine == .vlc {
+            _ = vlcBridge.applyAudioPreset(preset)
+        }
+        showHUD("Audio: \(preset.rawValue)")
+    }
+
+    private func nextScreenshotURL() throws -> URL {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures")
+        let folder = pictures.appendingPathComponent("Video Player Screenshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let fileName = "video-frame-\(formatter.string(from: Date())).png"
+        return folder.appendingPathComponent(fileName)
+    }
+
+    private func takeNativeScreenshot(to url: URL) throws {
+        guard let item = currentItem else { throw NSError(domain: "VideoPlayer", code: 1) }
+        let asset = AVURLAsset(url: item.url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        let image = try generator.copyCGImage(at: avPlayer.currentTime(), actualTime: nil)
+        let representation = NSBitmapImageRep(cgImage: image)
+        guard let data = representation.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "VideoPlayer", code: 2)
+        }
+        try data.write(to: url)
+    }
+
     private func startCodecTimer() {
         codecTimer?.invalidate()
         codecTickCount = 0
@@ -1012,6 +1269,7 @@ final class PlayerViewController: NSViewController {
 
         currentTimeLabel.stringValue = formatTime(currentSeconds)
         savePosition(currentSeconds, duration: durationSeconds)
+        enforceLoopIfNeeded(currentSeconds)
 
         if durationSeconds.isFinite && durationSeconds > 0 {
             seekSlider.maxValue = durationSeconds
@@ -1037,6 +1295,7 @@ final class PlayerViewController: NSViewController {
 
         let durationSeconds = avPlayer.currentItem?.duration.seconds ?? 0
         savePosition(currentSeconds, duration: durationSeconds)
+        enforceLoopIfNeeded(currentSeconds)
         if durationSeconds.isFinite && durationSeconds > 0 {
             seekSlider.maxValue = durationSeconds
             seekSlider.doubleValue = min(currentSeconds, durationSeconds)
@@ -1212,6 +1471,10 @@ final class PlayerViewController: NSViewController {
         if let speedTitle = stateStore.loadSpeedTitle(), speedPopup.itemTitles.contains(speedTitle) {
             speedPopup.selectItem(withTitle: speedTitle)
         }
+        if let presetTitle = stateStore.loadAudioPreset(), let preset = AudioPreset(rawValue: presetTitle) {
+            currentAudioPreset = preset
+            audioPresetPopup.selectItem(withTitle: preset.rawValue)
+        }
 
         let restored = stateStore.loadPlaylist()
         playlist = restored.0
@@ -1225,6 +1488,7 @@ final class PlayerViewController: NSViewController {
             tableView.scrollRowToVisible(currentIndex)
             let item = playlist[currentIndex]
             updateNowPlaying(title: item.title, detail: "Restored playlist")
+            updateMetadata(for: item)
         }
     }
 
@@ -1287,6 +1551,53 @@ final class PlayerViewController: NSViewController {
         }
     }
 
+    private func selectItemForInspection(at index: Int) {
+        guard playlist.indices.contains(index) else { return }
+        currentIndex = index
+        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        tableView.scrollRowToVisible(index)
+        let item = playlist[index]
+        updateMetadata(for: item)
+        updateNowPlaying(title: item.title, detail: "Ready to play")
+        savePlaylistState()
+    }
+
+    private func updateMetadataForSelection() {
+        let row = tableView.selectedRow
+        guard playlist.indices.contains(row) else {
+            metadataRequestID += 1
+            metadataTextView.stringValue = "Select a media item to inspect it before playback."
+            return
+        }
+        updateMetadata(for: playlist[row])
+    }
+
+    private func updateMetadata(for item: MediaItem) {
+        metadataRequestID += 1
+        let requestID = metadataRequestID
+        let savedPosition = stateStore.position(for: item)
+        metadataTextView.stringValue = "Loading metadata for \(item.title)..."
+
+        Task { [weak self] in
+            let metadata = await MediaMetadata.inspect(item: item, savedPosition: savedPosition)
+            await MainActor.run { [weak self] in
+                guard let self, self.metadataRequestID == requestID else { return }
+                self.metadataTextView.stringValue = """
+                \(metadata.title)
+
+                Type: \(metadata.kind)
+                Size: \(metadata.size)
+                Duration: \(metadata.duration)
+                Video: \(metadata.dimensions)
+                Modified: \(metadata.modified)
+                Resume: \(metadata.savedPosition)
+
+                \(metadata.location)
+                """
+            }
+        }
+    }
+
     private var currentItem: MediaItem? {
         guard let currentIndex, playlist.indices.contains(currentIndex) else { return nil }
         return playlist[currentIndex]
@@ -1333,6 +1644,18 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         playlist.count
     }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if currentEngine == .none {
+            let row = tableView.selectedRow
+            if playlist.indices.contains(row) {
+                currentIndex = row
+                updateNowPlaying(title: playlist[row].title, detail: "Ready to play")
+                savePlaylistState()
+            }
+        }
+        updateMetadataForSelection()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = NSUserInterfaceItemIdentifier("MediaCell")
         let item = playlist[row]
@@ -1345,7 +1668,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 
 extension PlayerViewController: DropViewDelegate {
     func dropView(_ dropView: DropView, didReceive urls: [URL]) {
-        addMedia(from: urls, replacePlaylist: playlist.isEmpty)
+        addMedia(from: urls, replacePlaylist: playlist.isEmpty, autoplay: false)
     }
 }
 

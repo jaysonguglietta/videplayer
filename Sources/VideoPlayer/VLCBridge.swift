@@ -6,6 +6,7 @@ final class VLCBridge {
     private var api: DynamicLibVLC?
     private var instance: OpaquePointer?
     private var player: OpaquePointer?
+    private var equalizer: OpaquePointer?
 
     var isAvailable: Bool {
         DynamicLibVLC.findLibrary() != nil
@@ -32,6 +33,9 @@ final class VLCBridge {
 
     deinit {
         stop()
+        if let equalizer {
+            api?.equalizerRelease?(equalizer)
+        }
         if let instance {
             api?.releaseInstance(instance)
         }
@@ -145,6 +149,42 @@ final class VLCBridge {
         _ = api.setRate(player, Float(speed))
     }
 
+    func takeSnapshot(to url: URL) -> Bool {
+        guard let api, let player, let takeSnapshot = api.takeSnapshot else { return false }
+        return url.path.withCString { path in
+            takeSnapshot(player, 0, path, 0, 0) == 0
+        }
+    }
+
+    func applyAudioPreset(_ preset: AudioPreset) -> Bool {
+        guard let api, let player, let setEqualizer = api.setEqualizer else { return false }
+
+        if let equalizer {
+            api.equalizerRelease?(equalizer)
+            self.equalizer = nil
+        }
+
+        guard preset != .flat else {
+            return setEqualizer(player, nil) == 0
+        }
+
+        guard
+            let equalizerNew = api.equalizerNew,
+            let equalizerSetPreamp = api.equalizerSetPreamp,
+            let equalizerSetAmp = api.equalizerSetAmp,
+            let newEqualizer = equalizerNew()
+        else {
+            return false
+        }
+        equalizer = newEqualizer
+
+        _ = equalizerSetPreamp(newEqualizer, preset.preamp)
+        for (index, value) in preset.bandAdjustments.enumerated() {
+            _ = equalizerSetAmp(newEqualizer, value, UInt32(index))
+        }
+        return setEqualizer(player, newEqualizer) == 0
+    }
+
     func stop() {
         stopPlayer()
     }
@@ -247,6 +287,12 @@ private final class DynamicLibVLC {
     typealias SetTrack = @convention(c) (OpaquePointer?, Int32) -> Int32
     typealias GetDelay = @convention(c) (OpaquePointer?) -> Int64
     typealias SetDelay = @convention(c) (OpaquePointer?, Int64) -> Int32
+    typealias TakeSnapshot = @convention(c) (OpaquePointer?, UInt32, UnsafePointer<CChar>?, UInt32, UInt32) -> Int32
+    typealias EqualizerNew = @convention(c) () -> OpaquePointer?
+    typealias EqualizerRelease = @convention(c) (OpaquePointer?) -> Void
+    typealias EqualizerSetPreamp = @convention(c) (OpaquePointer?, Float) -> Int32
+    typealias EqualizerSetAmp = @convention(c) (OpaquePointer?, Float, UInt32) -> Int32
+    typealias SetEqualizer = @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
 
     let pluginPath: String?
     let dataPath: String?
@@ -277,6 +323,12 @@ private final class DynamicLibVLC {
     let subtitleGetDelay: GetDelay
     let subtitleSetDelay: SetDelay
     let releaseTrackDescription: ReleaseTrackDescription
+    let takeSnapshot: TakeSnapshot?
+    let equalizerNew: EqualizerNew?
+    let equalizerRelease: EqualizerRelease?
+    let equalizerSetPreamp: EqualizerSetPreamp?
+    let equalizerSetAmp: EqualizerSetAmp?
+    let setEqualizer: SetEqualizer?
 
     private let handle: UnsafeMutableRawPointer
     private let coreHandle: UnsafeMutableRawPointer?
@@ -325,6 +377,12 @@ private final class DynamicLibVLC {
         self.subtitleGetDelay = try Self.load("libvlc_video_get_spu_delay", from: handle, as: GetDelay.self)
         self.subtitleSetDelay = try Self.load("libvlc_video_set_spu_delay", from: handle, as: SetDelay.self)
         self.releaseTrackDescription = try Self.load("libvlc_track_description_list_release", from: handle, as: ReleaseTrackDescription.self)
+        self.takeSnapshot = Self.loadOptional("libvlc_video_take_snapshot", from: handle, as: TakeSnapshot.self)
+        self.equalizerNew = Self.loadOptional("libvlc_audio_equalizer_new", from: handle, as: EqualizerNew.self)
+        self.equalizerRelease = Self.loadOptional("libvlc_audio_equalizer_release", from: handle, as: EqualizerRelease.self)
+        self.equalizerSetPreamp = Self.loadOptional("libvlc_audio_equalizer_set_preamp", from: handle, as: EqualizerSetPreamp.self)
+        self.equalizerSetAmp = Self.loadOptional("libvlc_audio_equalizer_set_amp_at_index", from: handle, as: EqualizerSetAmp.self)
+        self.setEqualizer = Self.loadOptional("libvlc_media_player_set_equalizer", from: handle, as: SetEqualizer.self)
     }
 
     deinit {
@@ -383,6 +441,11 @@ private final class DynamicLibVLC {
         guard let rawSymbol = dlsym(handle, symbol) else {
             throw VLCBridgeError.loadFailed("Missing VLC symbol: \(symbol)")
         }
+        return unsafeBitCast(rawSymbol, to: type)
+    }
+
+    private static func loadOptional<T>(_ symbol: String, from handle: UnsafeMutableRawPointer, as type: T.Type) -> T? {
+        guard let rawSymbol = dlsym(handle, symbol) else { return nil }
         return unsafeBitCast(rawSymbol, to: type)
     }
 

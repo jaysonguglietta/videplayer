@@ -6,6 +6,10 @@ Use File > Open to replace the playlist, or File > Add to Playlist to append med
 
 Use File > Open Network Stream for stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists.
 
+Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, and location. Press Space, K, the play button, or double-click the playlist row to start.
+
+Use File > Open Recent to reload a recently played file or stream. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
+
 ## Playback
 
 The transport bar includes previous, 10-second rewind, play/pause, 10-second fast-forward, next, speed, volume, and full-screen controls.
@@ -22,6 +26,10 @@ Keyboard shortcuts:
 - B: show or hide the sidebar
 - [: previous playlist item
 - ]: next playlist item
+
+## View Modes
+
+Use View > Toggle Sidebar to show or hide the playlist and inspector. Use View > Mini Player for a small floating player, View > Picture in Picture for a floating playback window, View > Theater Mode for a clean playback-focused view, or the full-screen button for macOS full screen.
 
 ## Volume Boost
 
@@ -43,6 +51,20 @@ Use the subtitle selector to choose embedded or external subtitle tracks. Use th
 ## Audio Tracks
 
 For media with multiple embedded audio tracks, use the audio track selector in the lower controls. This is especially useful for MKV files with multiple languages or commentary tracks.
+
+Use the audio preset selector or Playback > Audio Preset for Flat, Speech Boost, Bass Boost, or Night Mode. Presets are applied through VLC's equalizer when VLC-backed playback is active.
+
+## A-B Loop
+
+Use Playback > Set Loop Start at the beginning of the section, then Playback > Set Loop End after it. Playback jumps back to A whenever it reaches B. Use Playback > Clear Loop to stop looping.
+
+## Screenshots
+
+Use Playback > Take Screenshot to save the current frame. Screenshots are written to:
+
+```text
+~/Pictures/Video Player Screenshots
+```
 
 ## Resume and Persistence
 
