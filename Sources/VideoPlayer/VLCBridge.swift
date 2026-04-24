@@ -163,14 +163,18 @@ final class VLCBridge {
             return instance
         }
 
-        var arguments = [
+        if let pluginPath = api.pluginPath {
+            setenv("VLC_PLUGIN_PATH", pluginPath, 1)
+        }
+        if let dataPath = api.dataPath {
+            setenv("VLC_DATA_PATH", dataPath, 1)
+        }
+
+        let arguments = [
             "--quiet",
             "--no-video-title-show",
             "--no-metadata-network-access"
         ]
-        if let pluginPath = api.pluginPath {
-            arguments.append("--plugin-path=\(pluginPath)")
-        }
 
         let cStrings = arguments.map { strdup($0) }
         defer { cStrings.forEach { free($0) } }
@@ -245,6 +249,7 @@ private final class DynamicLibVLC {
     typealias SetDelay = @convention(c) (OpaquePointer?, Int64) -> Int32
 
     let pluginPath: String?
+    let dataPath: String?
     let createInstance: CreateInstance
     let releaseInstance: ReleaseInstance
     let mediaNewPath: MediaNewPath
@@ -292,6 +297,7 @@ private final class DynamicLibVLC {
         self.handle = handle
         self.coreHandle = coreHandle
         self.pluginPath = Self.pluginPath(for: libraryURL)
+        self.dataPath = Self.dataPath(for: libraryURL)
         self.createInstance = try Self.load("libvlc_new", from: handle, as: CreateInstance.self)
         self.releaseInstance = try Self.load("libvlc_release", from: handle, as: ReleaseInstance.self)
         self.mediaNewPath = try Self.load("libvlc_media_new_path", from: handle, as: MediaNewPath.self)
@@ -352,11 +358,25 @@ private final class DynamicLibVLC {
     }
 
     private static func pluginPath(for libraryURL: URL) -> String? {
-        let macOSDirectory = libraryURL
+        let runtimeRoot = libraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let candidate = macOSDirectory.appendingPathComponent("plugins").path
-        return FileManager.default.fileExists(atPath: candidate) ? candidate : nil
+        let candidates = [
+            runtimeRoot.appendingPathComponent("plugins").path,
+            runtimeRoot.appendingPathComponent("lib/vlc/plugins").path
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private static func dataPath(for libraryURL: URL) -> String? {
+        let runtimeRoot = libraryURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let candidates = [
+            runtimeRoot.appendingPathComponent("share").path,
+            runtimeRoot.appendingPathComponent("share/vlc").path
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
     private static func load<T>(_ symbol: String, from handle: UnsafeMutableRawPointer, as type: T.Type) throws -> T {
