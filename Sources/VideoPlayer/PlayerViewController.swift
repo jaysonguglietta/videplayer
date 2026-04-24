@@ -772,9 +772,12 @@ final class PlayerViewController: NSViewController {
     }
 
     private func makeControls() -> NSView {
-        let blur = NSVisualEffectView()
-        blur.material = .hudWindow
-        blur.blendingMode = .withinWindow
+        let controls = NSView()
+        controls.wantsLayer = true
+        controls.appearance = NSAppearance(named: .darkAqua)
+        controls.layer?.backgroundColor = NSColor(calibratedWhite: 0.035, alpha: 0.98).cgColor
+        controls.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        controls.layer?.borderWidth = 1
 
         let stack = NSStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -783,11 +786,11 @@ final class PlayerViewController: NSViewController {
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 16, right: 18)
 
         nowPlayingLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        nowPlayingLabel.textColor = .labelColor
+        nowPlayingLabel.textColor = .white
         nowPlayingLabel.lineBreakMode = .byTruncatingMiddle
 
         engineLabel.font = .systemFont(ofSize: 12, weight: .regular)
-        engineLabel.textColor = .secondaryLabelColor
+        engineLabel.textColor = NSColor(calibratedWhite: 0.78, alpha: 1)
         engineLabel.lineBreakMode = .byTruncatingMiddle
 
         let titleStack = NSStackView(views: [nowPlayingLabel, engineLabel])
@@ -801,6 +804,8 @@ final class PlayerViewController: NSViewController {
 
         currentTimeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         durationLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        currentTimeLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
+        durationLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         currentTimeLabel.alignment = .right
         durationLabel.alignment = .left
         currentTimeLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
@@ -811,22 +816,26 @@ final class PlayerViewController: NSViewController {
         timeline.alignment = .centerY
         timeline.spacing = 10
 
-        let previousButton = iconButton(systemName: "backward.end.fill", description: "Previous", action: #selector(playPrevious(_:)))
-        let backButton = iconButton(systemName: "gobackward.10", description: "Back 10 seconds", action: #selector(seekBackward(_:)))
+        let previousButton = iconButton(systemName: "backward.end.fill", description: "Previous", action: #selector(playPrevious(_:)), controlBarStyle: true)
+        let backButton = iconButton(systemName: "gobackward.10", description: "Back 10 seconds", action: #selector(seekBackward(_:)), controlBarStyle: true)
         playPauseButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play")
         playPauseButton.bezelStyle = .texturedRounded
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause(_:))
         playPauseButton.toolTip = "Play or pause"
+        playPauseButton.contentTintColor = .white
+        playPauseButton.appearance = NSAppearance(named: .darkAqua)
         playPauseButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
         playPauseButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        let forwardButton = iconButton(systemName: "goforward.10", description: "Forward 10 seconds", action: #selector(seekForward(_:)))
-        let nextButton = iconButton(systemName: "forward.end.fill", description: "Next", action: #selector(playNext(_:)))
+        let forwardButton = iconButton(systemName: "goforward.10", description: "Forward 10 seconds", action: #selector(seekForward(_:)), controlBarStyle: true)
+        let nextButton = iconButton(systemName: "forward.end.fill", description: "Next", action: #selector(playNext(_:)), controlBarStyle: true)
         sidebarButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle sidebar")
         sidebarButton.bezelStyle = .texturedRounded
         sidebarButton.target = self
         sidebarButton.action = #selector(toggleSidebar(_:))
         sidebarButton.toolTip = "Hide sidebar"
+        sidebarButton.contentTintColor = .white
+        sidebarButton.appearance = NSAppearance(named: .darkAqua)
         sidebarButton.translatesAutoresizingMaskIntoConstraints = false
         sidebarButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
         sidebarButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
@@ -846,17 +855,18 @@ final class PlayerViewController: NSViewController {
         setVolume(defaultVolume, persist: false)
 
         volumeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        volumeLabel.textColor = .secondaryLabelColor
+        volumeLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         volumeLabel.alignment = .right
         volumeLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
 
         let volumeIcon = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Volume") ?? NSImage())
         volumeIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        volumeIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
 
         let flexibleGap = NSView()
         flexibleGap.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let fullscreenButton = iconButton(systemName: "arrow.up.left.and.arrow.down.right", description: "Full screen", action: #selector(toggleFullscreen(_:)))
+        let fullscreenButton = iconButton(systemName: "arrow.up.left.and.arrow.down.right", description: "Full screen", action: #selector(toggleFullscreen(_:)), controlBarStyle: true)
 
         let transport = NSStackView(views: [
             previousButton,
@@ -882,16 +892,16 @@ final class PlayerViewController: NSViewController {
         stack.addArrangedSubview(timeline)
         stack.addArrangedSubview(transport)
         stack.addArrangedSubview(trackControls)
-        blur.addSubview(stack)
+        controls.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: blur.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: blur.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: blur.bottomAnchor)
+            stack.leadingAnchor.constraint(equalTo: controls.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: controls.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: controls.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: controls.bottomAnchor)
         ])
 
-        return blur
+        return controls
     }
 
     private func makeTrackControls() -> NSView {
@@ -916,7 +926,7 @@ final class PlayerViewController: NSViewController {
         audioDelayStepper.widthAnchor.constraint(equalToConstant: 52).isActive = true
 
         audioDelayLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        audioDelayLabel.textColor = .secondaryLabelColor
+        audioDelayLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         audioDelayLabel.alignment = .right
         audioDelayLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
 
@@ -934,15 +944,17 @@ final class PlayerViewController: NSViewController {
         subtitleDelayStepper.widthAnchor.constraint(equalToConstant: 52).isActive = true
 
         subtitleDelayLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        subtitleDelayLabel.textColor = .secondaryLabelColor
+        subtitleDelayLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         subtitleDelayLabel.alignment = .right
         subtitleDelayLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
 
         let audioIcon = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: "Audio") ?? NSImage())
         audioIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        audioIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
         let subtitleIcon = NSImageView(image: NSImage(systemSymbolName: "captions.bubble", accessibilityDescription: "Subtitles") ?? NSImage())
         subtitleIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        let loadSubtitleButton = iconButton(systemName: "text.badge.plus", description: "Load subtitles", action: #selector(openSubtitlePanel(_:)))
+        subtitleIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
+        let loadSubtitleButton = iconButton(systemName: "text.badge.plus", description: "Load subtitles", action: #selector(openSubtitlePanel(_:)), controlBarStyle: true)
 
         let gap = NSView()
         gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -1613,13 +1625,22 @@ final class PlayerViewController: NSViewController {
         emptyStateLabel.isHidden = !playlist.isEmpty || currentEngine != .none
     }
 
-    private func iconButton(systemName: String, description: String, action: Selector) -> NSButton {
+    private func iconButton(
+        systemName: String,
+        description: String,
+        action: Selector,
+        controlBarStyle: Bool = false
+    ) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: systemName, accessibilityDescription: description)
         button.bezelStyle = .texturedRounded
         button.target = self
         button.action = action
         button.toolTip = description
+        if controlBarStyle {
+            button.appearance = NSAppearance(named: .darkAqua)
+            button.contentTintColor = .white
+        }
         button.translatesAutoresizingMaskIntoConstraints = false
         button.widthAnchor.constraint(equalToConstant: 34).isActive = true
         button.heightAnchor.constraint(equalToConstant: 30).isActive = true
