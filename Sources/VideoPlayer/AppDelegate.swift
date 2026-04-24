@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let openRecentMenu = NSMenu(title: "Open Recent")
     private let chaptersMenu = NSMenu(title: "Chapters")
     private let audioOutputMenu = NSMenu(title: "Audio Output")
+    private let updateChecker = UpdateChecker()
 
     private var playerViewController: PlayerViewController? {
         playerWindowController?.playerViewController
@@ -168,6 +169,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playerWindowController?.window?.toggleFullScreen(sender)
     }
 
+    @objc private func showAbout(_ sender: Any?) {
+        showTextDialog(title: "About Video Player", text: OpenSourceNotices.aboutText, height: 220)
+    }
+
+    @objc private func showOpenSourceLicenses(_ sender: Any?) {
+        showTextDialog(title: "Open Source Licenses", text: OpenSourceNotices.licenseText, height: 420)
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        updateChecker.checkForUpdates(presentingWindow: playerWindowController?.window)
+    }
+
+    @objc private func openProjectRepository(_ sender: Any?) {
+        NSWorkspace.shared.open(OpenSourceNotices.repositoryURL)
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === openRecentMenu {
             rebuildOpenRecentMenu()
@@ -183,6 +200,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "Video Player")
+        let aboutItem = NSMenuItem(title: "About Video Player", action: #selector(showAbout(_:)), keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = self
+        appMenu.addItem(updateItem)
+        let licensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
+        licensesItem.target = self
+        appMenu.addItem(licensesItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit Video Player", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
@@ -297,6 +324,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
+        let helpMenuItem = NSMenuItem()
+        let helpMenu = NSMenu(title: "Help")
+        let helpUpdateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        helpUpdateItem.target = self
+        helpMenu.addItem(helpUpdateItem)
+        let helpLicensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
+        helpLicensesItem.target = self
+        helpMenu.addItem(helpLicensesItem)
+        helpMenu.addItem(.separator())
+        let repositoryItem = NSMenuItem(title: "Project on GitHub", action: #selector(openProjectRepository(_:)), keyEquivalent: "")
+        repositoryItem.target = self
+        helpMenu.addItem(repositoryItem)
+        helpMenuItem.submenu = helpMenu
+        mainMenu.addItem(helpMenuItem)
+        NSApplication.shared.helpMenu = helpMenu
+
         NSApplication.shared.mainMenu = mainMenu
     }
 
@@ -387,5 +430,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    private func showTextDialog(title: String, text: String, height: CGFloat) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.addButton(withTitle: "OK")
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 640, height: height))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.string = text
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .systemFont(ofSize: 12)
+        textView.textColor = .labelColor
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.bounds.width, height: .greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.runModal()
     }
 }

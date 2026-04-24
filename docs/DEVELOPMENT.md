@@ -57,6 +57,16 @@ Build/Video Player.dmg
 
 The DMG includes the app and an `/Applications` shortcut. It is unsigned and not notarized; distribution outside local testing should use an Apple Developer ID certificate and notarization.
 
+## Update Checks
+
+The in-app updater checks:
+
+```text
+https://api.github.com/repos/jaysonguglietta/videplayer/releases/latest
+```
+
+It compares the latest release tag against `CFBundleShortVersionString`, then downloads the first `.dmg` release asset to the user's Downloads folder. To publish an update, create a GitHub Release with a semver-style tag such as `v0.2.0` and attach `Video Player.dmg`.
+
 ## State Storage
 
 Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore`.

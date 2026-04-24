@@ -81,3 +81,9 @@ The app remembers playback position per file or stream. When reopening media wit
 ## On-Screen HUD
 
 The player briefly shows an on-screen HUD for common actions such as seeking, volume changes, speed changes, subtitle loading, and resume playback.
+
+## Updates and Licenses
+
+Use Video Player > Check for Updates or Help > Check for Updates to check the GitHub repository releases. If a newer release with a downloadable `.dmg` is available, the app downloads it to Downloads and offers to open it or reveal it in Finder.
+
+Use Video Player > About Video Player for app details. Use Video Player > Open Source Licenses or Help > Open Source Licenses to view bundled/open source software notices for Video Player, VLC/libVLC, and optional mpv support.

@@ -71,3 +71,9 @@ open "Build/Video Player.app"
 ```
 
 The release DMG is created at `Build/Video Player.dmg`.
+
+## Updates and Licenses
+
+Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater downloads the newest `.dmg` release asset to Downloads when a newer version is available.
+
+Use Video Player > Open Source Licenses or Help > Open Source Licenses for license and open source software notices.
