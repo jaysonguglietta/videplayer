@@ -3,6 +3,8 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var playerWindowController: PlayerWindowController?
     private let openRecentMenu = NSMenu(title: "Open Recent")
+    private let chaptersMenu = NSMenu(title: "Chapters")
+    private let audioOutputMenu = NSMenu(title: "Audio Output")
 
     private var playerViewController: PlayerViewController? {
         playerWindowController?.playerViewController
@@ -109,6 +111,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playerViewController?.applyAudioPreset(named: presetName)
     }
 
+    @objc private func previousChapter(_ sender: Any?) {
+        playerViewController?.previousChapter(sender)
+    }
+
+    @objc private func nextChapter(_ sender: Any?) {
+        playerViewController?.nextChapter(sender)
+    }
+
+    @objc private func selectChapter(_ sender: NSMenuItem) {
+        playerViewController?.selectChapter(at: sender.tag)
+    }
+
+    @objc private func decreaseAudioDelay(_ sender: Any?) {
+        playerViewController?.decreaseAudioDelay(sender)
+    }
+
+    @objc private func increaseAudioDelay(_ sender: Any?) {
+        playerViewController?.increaseAudioDelay(sender)
+    }
+
+    @objc private func resetAudioDelay(_ sender: Any?) {
+        playerViewController?.resetAudioDelay(sender)
+    }
+
+    @objc private func selectAudioOutput(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        playerViewController?.selectAudioOutputDevice(id: id, name: sender.title)
+    }
+
+    @objc private func showVideoAdjustments(_ sender: Any?) {
+        playerViewController?.showVideoAdjustments(sender)
+    }
+
+    @objc private func resetVideoAdjustments(_ sender: Any?) {
+        playerViewController?.resetVideoAdjustments(sender)
+    }
+
     @objc private func toggleSidebar(_ sender: Any?) {
         playerViewController?.toggleSidebar(sender)
     }
@@ -130,8 +169,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === openRecentMenu else { return }
-        rebuildOpenRecentMenu()
+        if menu === openRecentMenu {
+            rebuildOpenRecentMenu()
+        } else if menu === chaptersMenu {
+            rebuildChaptersMenu()
+        } else if menu === audioOutputMenu {
+            rebuildAudioOutputMenu()
+        }
     }
 
     private func buildMainMenu() {
@@ -192,6 +236,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playbackMenu.addItem(.separator())
         playbackMenu.addItem(NSMenuItem(title: "Take Screenshot", action: #selector(takeScreenshot(_:)), keyEquivalent: "p"))
         playbackMenu.addItem(.separator())
+        playbackMenu.addItem(NSMenuItem(title: "Previous Chapter", action: #selector(previousChapter(_:)), keyEquivalent: ","))
+        playbackMenu.addItem(NSMenuItem(title: "Next Chapter", action: #selector(nextChapter(_:)), keyEquivalent: "."))
+        let chaptersItem = NSMenuItem(title: "Chapters", action: nil, keyEquivalent: "")
+        chaptersMenu.delegate = self
+        chaptersItem.submenu = chaptersMenu
+        playbackMenu.addItem(chaptersItem)
+        playbackMenu.addItem(.separator())
         playbackMenu.addItem(NSMenuItem(title: "Set Loop Start", action: #selector(setLoopStart(_:)), keyEquivalent: "a"))
         playbackMenu.addItem(NSMenuItem(title: "Set Loop End", action: #selector(setLoopEnd(_:)), keyEquivalent: "b"))
         let clearLoopItem = NSMenuItem(title: "Clear Loop", action: #selector(clearLoop(_:)), keyEquivalent: "b")
@@ -199,6 +250,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playbackMenu.addItem(clearLoopItem)
         playbackMenu.addItem(.separator())
         playbackMenu.addItem(makeAudioPresetMenuItem())
+        let audioOutputItem = NSMenuItem(title: "Audio Output", action: nil, keyEquivalent: "")
+        audioOutputMenu.delegate = self
+        audioOutputItem.submenu = audioOutputMenu
+        playbackMenu.addItem(audioOutputItem)
+        playbackMenu.addItem(NSMenuItem(title: "Audio Delay -0.1s", action: #selector(decreaseAudioDelay(_:)), keyEquivalent: "{"))
+        playbackMenu.addItem(NSMenuItem(title: "Audio Delay +0.1s", action: #selector(increaseAudioDelay(_:)), keyEquivalent: "}"))
+        playbackMenu.addItem(NSMenuItem(title: "Reset Audio Delay", action: #selector(resetAudioDelay(_:)), keyEquivalent: "\\"))
         playbackMenu.items.forEach { $0.target = self }
         playbackMenuItem.submenu = playbackMenu
         mainMenu.addItem(playbackMenuItem)
@@ -217,6 +275,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         theaterItem.keyEquivalentModifierMask = [.command, .option]
         theaterItem.target = self
         viewMenu.addItem(theaterItem)
+        viewMenu.addItem(.separator())
+        let videoAdjustmentsItem = NSMenuItem(title: "Video Adjustments...", action: #selector(showVideoAdjustments(_:)), keyEquivalent: "e")
+        videoAdjustmentsItem.keyEquivalentModifierMask = [.command, .option]
+        videoAdjustmentsItem.target = self
+        viewMenu.addItem(videoAdjustmentsItem)
+        let resetVideoItem = NSMenuItem(title: "Reset Video Adjustments", action: #selector(resetVideoAdjustments(_:)), keyEquivalent: "e")
+        resetVideoItem.keyEquivalentModifierMask = [.command, .option, .shift]
+        resetVideoItem.target = self
+        viewMenu.addItem(resetVideoItem)
         viewMenu.addItem(.separator())
         let sidebarItem = NSMenuItem(title: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
         sidebarItem.keyEquivalentModifierMask = [.command, .option]
@@ -270,5 +337,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let parent = NSMenuItem(title: "Audio Preset", action: nil, keyEquivalent: "")
         parent.submenu = menu
         return parent
+    }
+
+    private func rebuildChaptersMenu() {
+        chaptersMenu.removeAllItems()
+        let chapters = playerViewController?.chapterItems() ?? []
+
+        guard !chapters.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No Chapters", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            chaptersMenu.addItem(emptyItem)
+            return
+        }
+
+        for (index, chapter) in chapters.enumerated() {
+            let title = "\(formatTime(chapter.startTime))  \(chapter.name)"
+            let item = NSMenuItem(title: title, action: #selector(selectChapter(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            chaptersMenu.addItem(item)
+        }
+    }
+
+    private func rebuildAudioOutputMenu() {
+        audioOutputMenu.removeAllItems()
+        let devices = playerViewController?.audioOutputDevices() ?? []
+
+        guard !devices.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No Devices Found", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            audioOutputMenu.addItem(emptyItem)
+            return
+        }
+
+        for device in devices {
+            let item = NSMenuItem(title: device.name, action: #selector(selectAudioOutput(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = device.id
+            audioOutputMenu.addItem(item)
+        }
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let totalSeconds = max(Int(seconds.rounded()), 0)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }

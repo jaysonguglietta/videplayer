@@ -10,20 +10,23 @@ struct MediaMetadata {
     let dimensions: String
     let modified: String
     let savedPosition: String
+    let extraDetails: [String]
 
-    static func inspect(item: MediaItem, savedPosition: Double) async -> MediaMetadata {
+    static func inspect(item: MediaItem, savedPosition: Double, vlcInspection: VLCMediaInspection? = nil) async -> MediaMetadata {
         let url = item.url
+        let title = vlcInspection?.preferredTitle ?? item.title
 
         guard url.isFileURL else {
             return MediaMetadata(
-                title: item.title,
+                title: title,
                 location: url.absoluteString,
                 kind: "Network Stream",
                 size: "--",
-                duration: "--",
+                duration: vlcInspection?.duration.map(formatTime) ?? "--",
                 dimensions: "--",
                 modified: "--",
-                savedPosition: savedPosition > 0 ? formatTime(savedPosition) : "--"
+                savedPosition: savedPosition > 0 ? formatTime(savedPosition) : "--",
+                extraDetails: vlcInspection?.detailLines ?? []
             )
         }
 
@@ -48,14 +51,17 @@ struct MediaMetadata {
         let height = Int(abs(naturalSize.height).rounded())
 
         return MediaMetadata(
-            title: item.title,
+            title: title,
             location: url.path,
             kind: url.pathExtension.uppercased().isEmpty ? "File" : url.pathExtension.uppercased(),
             size: byteCount.map { byteFormatter.string(fromByteCount: $0.int64Value) } ?? "--",
-            duration: durationSeconds.isFinite && durationSeconds > 0 ? formatTime(durationSeconds) : "--",
+            duration: durationSeconds.isFinite && durationSeconds > 0
+                ? formatTime(durationSeconds)
+                : (vlcInspection?.duration.map(formatTime) ?? "--"),
             dimensions: width > 0 && height > 0 ? "\(width)x\(height)" : "--",
             modified: modifiedDate.map { dateFormatter.string(from: $0) } ?? "--",
-            savedPosition: savedPosition > 0 ? formatTime(savedPosition) : "--"
+            savedPosition: savedPosition > 0 ? formatTime(savedPosition) : "--",
+            extraDetails: vlcInspection?.detailLines ?? []
         )
     }
 

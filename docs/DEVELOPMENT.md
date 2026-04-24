@@ -16,6 +16,8 @@ swift run
 
 The app uses AVFoundation for Apple-native playback and dynamically loads LibVLC when available.
 
+LibVLC integration is kept behind `VLCBridge`. New symbols should be loaded dynamically and treated as optional unless playback cannot work without them; this keeps the app tolerant of different VLC 3.x builds.
+
 ## Build the App Bundle
 
 ```sh
@@ -58,6 +60,16 @@ The DMG includes the app and an `/Applications` shortcut. It is unsigned and not
 ## State Storage
 
 Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore`.
+
+## LibVLC Features
+
+The app now uses LibVLC for more than playback:
+
+- metadata parsing before playback for richer movie, TV, artwork, language, and track details
+- chapter discovery and chapter selection
+- audio delay and output device selection
+- video adjustment filters
+- playback events for status, track changes, length changes, chapter changes, end, and error handling
 
 ## Validation
 

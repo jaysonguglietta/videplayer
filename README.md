@@ -9,12 +9,15 @@ A native macOS media player inspired by VLC: drag in media, build a playlist, pl
 - 200% volume boost with slider and mouse-wheel control over the player area.
 - Embedded audio/subtitle track selectors for VLC-backed playback.
 - Left-pane metadata inspector that shows file details before playback starts.
+- LibVLC metadata parsing for embedded movie, TV, artwork, language, and track details.
 - Recent files and saved library folders.
 - External subtitle loading for SRT, ASS, SSA, and VTT files.
 - Subtitle delay control.
 - A-B loop markers for repeating a section.
+- Chapter navigation for VLC-backed media.
 - Frame screenshots saved to Pictures.
-- Audio presets for flat, speech, bass, and night listening.
+- Audio presets, audio delay, and audio output device selection for VLC-backed playback.
+- Video adjustment panel for brightness, contrast, saturation, hue, and gamma.
 - Mini player, floating picture-in-picture-style window, theater mode, hideable sidebar, and full screen.
 - Playback resume per file or stream.
 - Playlist, selected item, volume, and speed persistence.

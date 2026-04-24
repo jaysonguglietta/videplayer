@@ -38,6 +38,9 @@ final class PlayerViewController: NSViewController {
     private var savedWindowFrame: NSRect?
     private var savedWindowLevel: NSWindow.Level = .normal
     private var metadataRequestID = 0
+    private var currentVideoAdjustments = VideoAdjustments()
+    private var videoAdjustmentPanel: NSPanel?
+    private var videoAdjustmentSliders: [VideoAdjustmentKey: NSSlider] = [:]
 
     private let playerView = AVPlayerView()
     private let vlcVideoSurface = NSView()
@@ -61,6 +64,8 @@ final class PlayerViewController: NSViewController {
     private let speedPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let audioTrackPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let audioPresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let audioDelayStepper = NSStepper()
+    private let audioDelayLabel = NSTextField(labelWithString: "0.0s")
     private let subtitleTrackPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let subtitleDelayStepper = NSStepper()
     private let subtitleDelayLabel = NSTextField(labelWithString: "0.0s")
@@ -73,6 +78,7 @@ final class PlayerViewController: NSViewController {
         view = rootView
         buildInterface(in: rootView)
         configurePlayer()
+        configureVLCEvents()
         configureScrollWheelVolume()
         configureKeyboardShortcuts()
         restorePersistentState()
@@ -278,6 +284,118 @@ final class PlayerViewController: NSViewController {
         applyAudioPreset(preset)
     }
 
+    func chapterItems() -> [ChapterOption] {
+        guard currentEngine == .vlc else { return [] }
+        return vlcBridge.chapters()
+    }
+
+    func selectChapter(at index: Int) {
+        let chapters = chapterItems()
+        guard chapters.indices.contains(index) else { return }
+        if vlcBridge.selectChapter(index: chapters[index].index) {
+            showHUD(chapters[index].name)
+        }
+    }
+
+    @objc func previousChapter(_ sender: Any? = nil) {
+        guard currentEngine == .vlc else {
+            showHUD("Chapters need VLC playback")
+            return
+        }
+        vlcBridge.previousChapter()
+        showHUD("Previous chapter")
+    }
+
+    @objc func nextChapter(_ sender: Any? = nil) {
+        guard currentEngine == .vlc else {
+            showHUD("Chapters need VLC playback")
+            return
+        }
+        vlcBridge.nextChapter()
+        showHUD("Next chapter")
+    }
+
+    func audioOutputDevices() -> [AudioOutputDevice] {
+        guard currentEngine == .vlc else { return [] }
+        return vlcBridge.audioOutputDevices()
+    }
+
+    func selectAudioOutputDevice(id: String, name: String) {
+        if vlcBridge.selectAudioOutputDevice(id: id) {
+            showHUD("Audio output: \(name)")
+        }
+    }
+
+    @objc func decreaseAudioDelay(_ sender: Any? = nil) {
+        adjustAudioDelay(by: -0.1)
+    }
+
+    @objc func increaseAudioDelay(_ sender: Any? = nil) {
+        adjustAudioDelay(by: 0.1)
+    }
+
+    @objc func resetAudioDelay(_ sender: Any? = nil) {
+        setAudioDelay(0)
+    }
+
+    @objc func showVideoAdjustments(_ sender: Any? = nil) {
+        if let videoAdjustmentPanel {
+            videoAdjustmentPanel.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 292),
+            styleMask: [.titled, .closable, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Video Adjustments"
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
+
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+
+        videoAdjustmentSliders = [:]
+        for key in VideoAdjustmentKey.allCases {
+            stack.addArrangedSubview(makeVideoAdjustmentRow(for: key))
+        }
+
+        let resetButton = NSButton(title: "Reset", target: self, action: #selector(resetVideoAdjustments(_:)))
+        resetButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [NSView(), resetButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 8
+        stack.addArrangedSubview(buttonRow)
+
+        let contentView = NSView()
+        contentView.addSubview(stack)
+        panel.contentView = contentView
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
+
+        videoAdjustmentPanel = panel
+        view.window?.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func resetVideoAdjustments(_ sender: Any? = nil) {
+        currentVideoAdjustments = VideoAdjustments()
+        for key in VideoAdjustmentKey.allCases {
+            videoAdjustmentSliders[key]?.doubleValue = key.defaultValue
+        }
+        applyVideoAdjustments(showHUD: true)
+    }
+
     @objc func togglePlayPause(_ sender: Any?) {
         switch currentEngine {
         case .native:
@@ -433,6 +551,33 @@ final class PlayerViewController: NSViewController {
         }
     }
 
+    @objc private func audioDelayChanged(_ sender: NSStepper) {
+        setAudioDelay(sender.doubleValue)
+    }
+
+    @objc private func videoAdjustmentSliderChanged(_ sender: NSSlider) {
+        guard let identifier = sender.identifier?.rawValue,
+              let key = VideoAdjustmentKey(rawValue: identifier)
+        else {
+            return
+        }
+
+        switch key {
+        case .brightness:
+            currentVideoAdjustments.brightness = sender.doubleValue
+        case .contrast:
+            currentVideoAdjustments.contrast = sender.doubleValue
+        case .saturation:
+            currentVideoAdjustments.saturation = sender.doubleValue
+        case .hue:
+            currentVideoAdjustments.hue = sender.doubleValue
+        case .gamma:
+            currentVideoAdjustments.gamma = sender.doubleValue
+        }
+
+        applyVideoAdjustments(showHUD: false)
+    }
+
     private func buildInterface(in rootView: NSView) {
         let splitView = NSSplitView()
         splitView.translatesAutoresizingMaskIntoConstraints = false
@@ -512,7 +657,7 @@ final class PlayerViewController: NSViewController {
         metadataTextView.translatesAutoresizingMaskIntoConstraints = false
         metadataTextView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         metadataTextView.textColor = .secondaryLabelColor
-        metadataTextView.maximumNumberOfLines = 12
+        metadataTextView.maximumNumberOfLines = 18
         metadataTextView.lineBreakMode = .byTruncatingMiddle
 
         metadataPanel.addSubview(metadataTitle)
@@ -535,7 +680,7 @@ final class PlayerViewController: NSViewController {
             metadataPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             metadataPanel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             metadataPanel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            metadataPanel.heightAnchor.constraint(equalToConstant: 210),
+            metadataPanel.heightAnchor.constraint(equalToConstant: 260),
 
             metadataTitle.leadingAnchor.constraint(equalTo: metadataPanel.leadingAnchor, constant: 14),
             metadataTitle.trailingAnchor.constraint(equalTo: metadataPanel.trailingAnchor, constant: -14),
@@ -762,6 +907,19 @@ final class PlayerViewController: NSViewController {
         audioPresetPopup.toolTip = "Audio preset"
         audioPresetPopup.widthAnchor.constraint(equalToConstant: 132).isActive = true
 
+        audioDelayStepper.minValue = -30
+        audioDelayStepper.maxValue = 30
+        audioDelayStepper.increment = 0.1
+        audioDelayStepper.target = self
+        audioDelayStepper.action = #selector(audioDelayChanged(_:))
+        audioDelayStepper.toolTip = "Audio delay"
+        audioDelayStepper.widthAnchor.constraint(equalToConstant: 52).isActive = true
+
+        audioDelayLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        audioDelayLabel.textColor = .secondaryLabelColor
+        audioDelayLabel.alignment = .right
+        audioDelayLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
+
         subtitleTrackPopup.target = self
         subtitleTrackPopup.action = #selector(subtitleTrackChanged(_:))
         subtitleTrackPopup.toolTip = "Subtitle track"
@@ -793,6 +951,8 @@ final class PlayerViewController: NSViewController {
             audioIcon,
             audioTrackPopup,
             audioPresetPopup,
+            audioDelayStepper,
+            audioDelayLabel,
             subtitleIcon,
             subtitleTrackPopup,
             loadSubtitleButton,
@@ -824,6 +984,14 @@ final class PlayerViewController: NSViewController {
             name: .AVPlayerItemFailedToPlayToEndTime,
             object: nil
         )
+    }
+
+    private func configureVLCEvents() {
+        vlcBridge.eventHandler = { [weak self] event in
+            DispatchQueue.main.async {
+                self?.handleVLCEvent(event)
+            }
+        }
     }
 
     private func configureScrollWheelVolume() {
@@ -1055,6 +1223,9 @@ final class PlayerViewController: NSViewController {
             if currentAudioPreset != .flat {
                 _ = vlcBridge.applyAudioPreset(currentAudioPreset)
             }
+            if !currentVideoAdjustments.isDefault {
+                _ = vlcBridge.applyVideoAdjustments(currentVideoAdjustments)
+            }
             autoLoadSidecarSubtitle(for: item)
             scheduleTrackMenuRefresh()
         } catch {
@@ -1226,6 +1397,75 @@ final class PlayerViewController: NSViewController {
         showHUD("Audio: \(preset.rawValue)")
     }
 
+    private func adjustAudioDelay(by delta: Double) {
+        setAudioDelay(audioDelayStepper.doubleValue + delta)
+    }
+
+    private func setAudioDelay(_ delay: Double) {
+        let clampedDelay = min(max(delay, audioDelayStepper.minValue), audioDelayStepper.maxValue)
+        audioDelayStepper.doubleValue = clampedDelay
+        audioDelayLabel.stringValue = String(format: "%.1fs", clampedDelay)
+        guard currentEngine == .vlc else {
+            showHUD("Audio delay needs VLC playback")
+            return
+        }
+        if vlcBridge.setAudioDelay(seconds: clampedDelay) {
+            showHUD("Audio delay \(String(format: "%.1fs", clampedDelay))")
+        }
+    }
+
+    private func applyVideoAdjustments(showHUD shouldShowHUD: Bool) {
+        guard currentEngine == .vlc else {
+            if shouldShowHUD {
+                showHUD("Video adjustments need VLC playback")
+            }
+            return
+        }
+
+        if vlcBridge.applyVideoAdjustments(currentVideoAdjustments), shouldShowHUD {
+            showHUD(currentVideoAdjustments.isDefault ? "Video reset" : "Video adjusted")
+        }
+    }
+
+    private func makeVideoAdjustmentRow(for key: VideoAdjustmentKey) -> NSView {
+        let label = NSTextField(labelWithString: key.title)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.widthAnchor.constraint(equalToConstant: 82).isActive = true
+
+        let slider = NSSlider(
+            value: videoAdjustmentValue(for: key),
+            minValue: key.range.lowerBound,
+            maxValue: key.range.upperBound,
+            target: self,
+            action: #selector(videoAdjustmentSliderChanged(_:))
+        )
+        slider.identifier = NSUserInterfaceItemIdentifier(key.rawValue)
+        slider.isContinuous = true
+        slider.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        videoAdjustmentSliders[key] = slider
+
+        let stack = NSStackView(views: [label, slider])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
+    }
+
+    private func videoAdjustmentValue(for key: VideoAdjustmentKey) -> Double {
+        switch key {
+        case .brightness:
+            currentVideoAdjustments.brightness
+        case .contrast:
+            currentVideoAdjustments.contrast
+        case .saturation:
+            currentVideoAdjustments.saturation
+        case .hue:
+            currentVideoAdjustments.hue
+        case .gamma:
+            currentVideoAdjustments.gamma
+        }
+    }
+
     private func nextScreenshotURL() throws -> URL {
         let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures")
@@ -1304,6 +1544,43 @@ final class PlayerViewController: NSViewController {
             seekSlider.maxValue = 1
             seekSlider.doubleValue = 0
             durationLabel.stringValue = "0:00"
+        }
+    }
+
+    private func handleVLCEvent(_ event: VLCPlaybackEvent) {
+        guard currentEngine == .vlc else { return }
+
+        switch event {
+        case .opening:
+            engineLabel.stringValue = "Opening with VLC codec engine"
+        case .buffering:
+            engineLabel.stringValue = "Buffering with VLC codec engine"
+        case .playing:
+            engineLabel.stringValue = "Playing in-app with VLC codec engine"
+            refreshControls()
+        case .paused:
+            engineLabel.stringValue = "Paused"
+            refreshControls()
+        case .stopped:
+            refreshControls()
+        case .ended:
+            if let currentItem {
+                stateStore.clearPosition(for: currentItem)
+            }
+            playNext(nil)
+        case .error:
+            currentEngine = .none
+            engineLabel.stringValue = "VLC encountered a playback error."
+            vlcVideoSurface.isHidden = true
+            playerView.isHidden = false
+            resetTrackMenus()
+            refreshControls()
+        case .lengthChanged:
+            updateCodecTimeline()
+        case .chapterChanged:
+            showHUD("Chapter changed")
+        case .tracksChanged:
+            refreshTrackMenus()
         }
     }
 
@@ -1396,6 +1673,11 @@ final class PlayerViewController: NSViewController {
         isUpdatingTrackMenus = true
         populate(audioTrackPopup, options: vlcBridge.audioTracks(), selectedID: vlcBridge.selectedAudioTrackID(), emptyTitle: "Audio Track")
 
+        let audioDelay = vlcBridge.audioDelaySeconds()
+        audioDelayStepper.doubleValue = audioDelay
+        audioDelayLabel.stringValue = String(format: "%.1fs", audioDelay)
+        audioDelayStepper.isEnabled = true
+
         var subtitles = vlcBridge.subtitleTracks()
         if !subtitles.contains(where: { $0.id == -1 }) {
             subtitles.insert(TrackOption(id: -1, name: "Subtitles Off"), at: 0)
@@ -1416,6 +1698,9 @@ final class PlayerViewController: NSViewController {
         audioTrackPopup.removeAllItems()
         audioTrackPopup.addItem(withTitle: "Audio Track")
         audioTrackPopup.isEnabled = false
+        audioDelayStepper.doubleValue = 0
+        audioDelayStepper.isEnabled = false
+        audioDelayLabel.stringValue = "0.0s"
         subtitleTrackPopup.removeAllItems()
         subtitleTrackPopup.addItem(withTitle: "Subtitles")
         subtitleTrackPopup.isEnabled = false
@@ -1579,9 +1864,19 @@ final class PlayerViewController: NSViewController {
         metadataTextView.stringValue = "Loading metadata for \(item.title)..."
 
         Task { [weak self] in
-            let metadata = await MediaMetadata.inspect(item: item, savedPosition: savedPosition)
+            let vlcInspection = await Task.detached(priority: .utility) {
+                VLCBridge.inspectMedia(url: item.url)
+            }.value
+            let metadata = await MediaMetadata.inspect(
+                item: item,
+                savedPosition: savedPosition,
+                vlcInspection: vlcInspection
+            )
             await MainActor.run { [weak self] in
                 guard let self, self.metadataRequestID == requestID else { return }
+                let extraDetails = metadata.extraDetails.isEmpty
+                    ? ""
+                    : "\n\n\(metadata.extraDetails.joined(separator: "\n"))"
                 self.metadataTextView.stringValue = """
                 \(metadata.title)
 
@@ -1593,6 +1888,7 @@ final class PlayerViewController: NSViewController {
                 Resume: \(metadata.savedPosition)
 
                 \(metadata.location)
+                \(extraDetails)
                 """
             }
         }
@@ -1669,6 +1965,14 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 extension PlayerViewController: DropViewDelegate {
     func dropView(_ dropView: DropView, didReceive urls: [URL]) {
         addMedia(from: urls, replacePlaylist: playlist.isEmpty, autoplay: false)
+    }
+}
+
+extension PlayerViewController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSPanel === videoAdjustmentPanel else { return }
+        videoAdjustmentPanel = nil
+        videoAdjustmentSliders = [:]
     }
 }
 

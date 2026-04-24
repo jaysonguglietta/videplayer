@@ -6,7 +6,7 @@ Use File > Open to replace the playlist, or File > Add to Playlist to append med
 
 Use File > Open Network Stream for stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists.
 
-Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, and location. Press Space, K, the play button, or double-click the playlist row to start.
+Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and LibVLC metadata such as show, season, episode, artwork, language, and track summaries when available. Press Space, K, the play button, or double-click the playlist row to start.
 
 Use File > Open Recent to reload a recently played file or stream. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
 
@@ -31,6 +31,8 @@ Keyboard shortcuts:
 
 Use View > Toggle Sidebar to show or hide the playlist and inspector. Use View > Mini Player for a small floating player, View > Picture in Picture for a floating playback window, View > Theater Mode for a clean playback-focused view, or the full-screen button for macOS full screen.
 
+Use View > Video Adjustments to change brightness, contrast, saturation, hue, and gamma for VLC-backed video. Use View > Reset Video Adjustments to return to the original picture.
+
 ## Volume Boost
 
 The volume slider goes to 200%. Scroll the mouse wheel or trackpad over the player area to adjust volume without moving the pointer to the slider. VLC-backed playback supports amplification above 100%; AVFoundation playback is limited by macOS and caps audio output at 100%.
@@ -53,6 +55,12 @@ Use the subtitle selector to choose embedded or external subtitle tracks. Use th
 For media with multiple embedded audio tracks, use the audio track selector in the lower controls. This is especially useful for MKV files with multiple languages or commentary tracks.
 
 Use the audio preset selector or Playback > Audio Preset for Flat, Speech Boost, Bass Boost, or Night Mode. Presets are applied through VLC's equalizer when VLC-backed playback is active.
+
+Use the audio delay stepper or Playback > Audio Delay to sync audio earlier or later. Use Playback > Audio Output to choose a device when LibVLC reports available outputs.
+
+## Chapters
+
+Use Playback > Previous Chapter, Playback > Next Chapter, or Playback > Chapters to navigate chaptered media such as movies, concert videos, and discs.
 
 ## A-B Loop
 
