@@ -13,7 +13,8 @@ enum OpenSourceNotices {
         Repository:
         \(repositoryURL.absoluteString)
 
-        This application currently does not declare a project license in the repository. Add a LICENSE file before distributing it broadly.
+        License:
+        MIT License
         """
     }
 
@@ -23,7 +24,9 @@ enum OpenSourceNotices {
 
         Video Player
         - Local application code in this repository.
-        - Project license: not specified yet. Add a LICENSE file before public distribution.
+        - Project license: MIT License.
+        - Copyright (c) 2026 Jayson Guglietta.
+        - License file: LICENSE in the repository root.
         - Repository: \(repositoryURL.absoluteString)
 
         VideoLAN VLC / libVLC

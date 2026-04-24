@@ -6,6 +6,7 @@
 - `Sources/VideoPlayer`: AppKit app source.
 - `Scripts/build_app.sh`: Release build and `.app` bundle packaging.
 - `Scripts/build_release_dmg.sh`: Builds the app bundle and wraps it in a drag-install DMG.
+- `LICENSE`: MIT License for the Video Player application source code.
 - `docs`: User and developer documentation.
 
 ## Build From Source
@@ -80,6 +81,10 @@ The app now uses LibVLC for more than playback:
 - audio delay and output device selection
 - video adjustment filters
 - playback events for status, track changes, length changes, chapter changes, end, and error handling
+
+## Licensing
+
+Video Player's application source code is released under the MIT License. VLC/libVLC, mpv, Apple frameworks, and other upstream components keep their own license terms; keep the in-app Open Source Licenses notice current when adding or bundling dependencies.
 
 ## Validation
 
