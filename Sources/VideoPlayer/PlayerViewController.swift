@@ -620,10 +620,12 @@ final class PlayerViewController: NSViewController {
 
         let openButton = iconButton(systemName: "plus", description: "Add media", action: #selector(openFromToolbar(_:)))
         let clearButton = iconButton(systemName: "trash", description: "Clear playlist", action: #selector(clearPlaylist(_:)))
+        let hideSidebarButton = iconButton(systemName: "sidebar.left", description: "Hide sidebar", action: #selector(toggleSidebar(_:)))
 
         header.addArrangedSubview(title)
         header.addArrangedSubview(openButton)
         header.addArrangedSubview(clearButton)
+        header.addArrangedSubview(hideSidebarButton)
 
         tableView.headerView = nil
         tableView.delegate = self
