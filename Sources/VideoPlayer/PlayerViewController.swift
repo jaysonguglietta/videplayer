@@ -33,6 +33,9 @@ final class PlayerViewController: NSViewController {
 
     private let playerView = AVPlayerView()
     private let vlcVideoSurface = NSView()
+    private weak var splitView: NSSplitView?
+    private weak var sidebarView: NSView?
+    private var sidebarWidthConstraint: NSLayoutConstraint?
     private weak var playerAreaView: NSView?
     private let tableView = NSTableView()
     private let emptyStateLabel = NSTextField(labelWithString: "Drop media files here or open a file")
@@ -43,6 +46,7 @@ final class PlayerViewController: NSViewController {
     private let durationLabel = NSTextField(labelWithString: "0:00")
     private let seekSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let playPauseButton = NSButton()
+    private let sidebarButton = NSButton()
     private let volumeSlider = NSSlider(value: 70, minValue: 0, maxValue: 200, target: nil, action: nil)
     private let volumeLabel = NSTextField(labelWithString: "70%")
     private let speedPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -198,6 +202,21 @@ final class PlayerViewController: NSViewController {
         isMuted.toggle()
     }
 
+    @objc func toggleSidebar(_ sender: Any?) {
+        guard let sidebarView else { return }
+        let shouldHide = !sidebarView.isHidden
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            sidebarWidthConstraint?.animator().constant = shouldHide ? 0 : 280
+            sidebarView.animator().isHidden = shouldHide
+            splitView?.animator().layoutSubtreeIfNeeded()
+        }
+
+        updateSidebarButton(sidebarHidden: shouldHide)
+        showHUD(shouldHide ? "Sidebar hidden" : "Sidebar shown")
+    }
+
     @objc private func openFromToolbar(_ sender: Any?) {
         openFilesPanel(replacePlaylist: playlist.isEmpty)
     }
@@ -271,6 +290,7 @@ final class PlayerViewController: NSViewController {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.isVertical = true
         splitView.dividerStyle = .thin
+        self.splitView = splitView
         rootView.addSubview(splitView)
 
         NSLayoutConstraint.activate([
@@ -282,9 +302,12 @@ final class PlayerViewController: NSViewController {
 
         let sidebar = makeSidebar()
         let playerArea = makePlayerArea()
+        sidebarView = sidebar
         splitView.addArrangedSubview(sidebar)
         splitView.addArrangedSubview(playerArea)
-        sidebar.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        let widthConstraint = sidebar.widthAnchor.constraint(equalToConstant: 280)
+        widthConstraint.isActive = true
+        sidebarWidthConstraint = widthConstraint
     }
 
     private func makeSidebar() -> NSView {
@@ -473,6 +496,14 @@ final class PlayerViewController: NSViewController {
         playPauseButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         let forwardButton = iconButton(systemName: "goforward.10", description: "Forward 10 seconds", action: #selector(seekForward(_:)))
         let nextButton = iconButton(systemName: "forward.end.fill", description: "Next", action: #selector(playNext(_:)))
+        sidebarButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle sidebar")
+        sidebarButton.bezelStyle = .texturedRounded
+        sidebarButton.target = self
+        sidebarButton.action = #selector(toggleSidebar(_:))
+        sidebarButton.toolTip = "Hide sidebar"
+        sidebarButton.translatesAutoresizingMaskIntoConstraints = false
+        sidebarButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        sidebarButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
         speedPopup.addItems(withTitles: ["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"])
         speedPopup.selectItem(withTitle: "1x")
@@ -512,6 +543,7 @@ final class PlayerViewController: NSViewController {
             volumeIcon,
             volumeSlider,
             volumeLabel,
+            sidebarButton,
             fullscreenButton
         ])
         transport.orientation = .horizontal
@@ -659,6 +691,8 @@ final class PlayerViewController: NSViewController {
                 toggleMute(nil)
             case "f":
                 toggleFullscreen(nil)
+            case "b":
+                toggleSidebar(nil)
             case "[":
                 playPrevious(nil)
             case "]":
@@ -1027,7 +1061,16 @@ final class PlayerViewController: NSViewController {
             systemSymbolName: isPlaying ? "pause.fill" : "play.fill",
             accessibilityDescription: isPlaying ? "Pause" : "Play"
         )
+        updateSidebarButton(sidebarHidden: sidebarView?.isHidden == true)
         updateEmptyState()
+    }
+
+    private func updateSidebarButton(sidebarHidden: Bool) {
+        sidebarButton.image = NSImage(
+            systemSymbolName: sidebarHidden ? "sidebar.left" : "sidebar.left",
+            accessibilityDescription: sidebarHidden ? "Show sidebar" : "Hide sidebar"
+        )
+        sidebarButton.toolTip = sidebarHidden ? "Show sidebar" : "Hide sidebar"
     }
 
     private func updateEmptyState() {

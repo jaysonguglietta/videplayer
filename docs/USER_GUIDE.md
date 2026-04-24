@@ -19,6 +19,7 @@ Keyboard shortcuts:
 - Down arrow: volume down
 - M: mute
 - F: full screen
+- B: show or hide the sidebar
 - [: previous playlist item
 - ]: next playlist item
 

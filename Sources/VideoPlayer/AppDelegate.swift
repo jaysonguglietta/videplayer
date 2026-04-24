@@ -67,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         playerWindowController?.playerViewController.toggleMute(sender)
     }
 
+    @objc private func toggleSidebar(_ sender: Any?) {
+        playerWindowController?.playerViewController.toggleSidebar(sender)
+    }
+
     @objc private func toggleFullscreen(_ sender: Any?) {
         playerWindowController?.window?.toggleFullScreen(sender)
     }
@@ -118,7 +122,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
-        let fullscreenItem = NSMenuItem(title: "Enter Full Screen", action: #selector(toggleFullscreen(_:)), keyEquivalent: "f")
+        let sidebarItem = NSMenuItem(title: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        sidebarItem.keyEquivalentModifierMask = [.command, .option]
+        sidebarItem.target = self
+        viewMenu.addItem(sidebarItem)
+        viewMenu.addItem(.separator())
+        let fullscreenItem = NSMenuItem(title: "Toggle Full Screen", action: #selector(toggleFullscreen(_:)), keyEquivalent: "f")
         fullscreenItem.keyEquivalentModifierMask = [.command, .control]
         fullscreenItem.target = self
         viewMenu.addItem(fullscreenItem)

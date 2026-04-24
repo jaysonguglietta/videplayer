@@ -19,7 +19,7 @@ A native macOS media player inspired by VLC: drag in media, build a playlist, pl
 
 - Use the circular 10-second buttons or the left/right arrow keys to rewind and fast-forward.
 - Move the volume slider up to 200%, or scroll the mouse wheel over the player area to adjust volume.
-- Press Space or K to play/pause, J/L to seek, Up/Down for volume, M to mute, F for full screen, and [/] for previous/next playlist items.
+- Press Space or K to play/pause, J/L to seek, Up/Down for volume, M to mute, F for full screen, B to show or hide the sidebar, and [/] for previous/next playlist items.
 
 ## Format support
 
