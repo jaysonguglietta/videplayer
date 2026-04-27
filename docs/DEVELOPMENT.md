@@ -66,7 +66,19 @@ The in-app updater checks:
 https://api.github.com/repos/jaysonguglietta/videplayer/releases/latest
 ```
 
-It compares the latest release tag against `CFBundleShortVersionString`, then downloads the first `.dmg` release asset to the user's Downloads folder. To publish an update, create a GitHub Release with a semver-style tag such as `v0.2.0` and attach `Video Player.dmg`.
+It compares the latest release tag against `CFBundleShortVersionString`, then downloads the first `.dmg` release asset to the user's Downloads folder. If no release exists, the app asks you to publish one with a DMG asset.
+
+To publish an update:
+
+1. Bump `APP_VERSION` and `APP_BUILD` in `Scripts/build_app.sh`.
+2. Log in with `gh auth login`.
+3. Run:
+
+```sh
+./Scripts/publish_release.sh
+```
+
+The script builds `Build/Video Player.dmg`, creates or updates a semver-style GitHub Release such as `v0.2.0`, and attaches the DMG asset used by the updater.
 
 ## State Storage
 

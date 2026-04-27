@@ -76,6 +76,12 @@ The release DMG is created at `Build/Video Player.dmg`.
 
 Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater downloads the newest `.dmg` release asset to Downloads when a newer version is available.
 
+To publish an update, log in with `gh auth login`, bump `APP_VERSION` in [Scripts/build_app.sh](Scripts/build_app.sh), then run:
+
+```sh
+./Scripts/publish_release.sh
+```
+
 Use Video Player > Open Source Licenses or Help > Open Source Licenses for license and open source software notices.
 
 Video Player's application source code is released under the [MIT License](LICENSE). Bundled and optional media engines such as VLC/libVLC and mpv have their own upstream license terms.
