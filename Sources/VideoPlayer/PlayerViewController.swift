@@ -787,18 +787,6 @@ final class PlayerViewController: NSViewController {
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 16, right: 18)
 
-        nowPlayingLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        nowPlayingLabel.textColor = .white
-        nowPlayingLabel.lineBreakMode = .byTruncatingMiddle
-
-        engineLabel.font = .systemFont(ofSize: 12, weight: .regular)
-        engineLabel.textColor = NSColor(calibratedWhite: 0.78, alpha: 1)
-        engineLabel.lineBreakMode = .byTruncatingMiddle
-
-        let titleStack = NSStackView(views: [nowPlayingLabel, engineLabel])
-        titleStack.orientation = .vertical
-        titleStack.spacing = 2
-
         seekSlider.target = self
         seekSlider.action = #selector(sliderChanged(_:))
         seekSlider.isContinuous = true
@@ -890,7 +878,6 @@ final class PlayerViewController: NSViewController {
 
         let trackControls = makeTrackControls()
 
-        stack.addArrangedSubview(titleStack)
         stack.addArrangedSubview(timeline)
         stack.addArrangedSubview(transport)
         stack.addArrangedSubview(trackControls)
