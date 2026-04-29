@@ -84,18 +84,26 @@ final class MPVBridge {
         }
     }
 
-    private static func findExecutable() -> String? {
-        let fileManager = FileManager.default
-        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-        let candidates = pathEntries.map { "\($0)/mpv" } + [
+    static func candidateExecutablePaths(environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        var candidates = [
             "/opt/homebrew/bin/mpv",
             "/usr/local/bin/mpv",
             "/Applications/mpv.app/Contents/MacOS/mpv"
         ]
 
-        return candidates.first { fileManager.isExecutableFile(atPath: $0) }
+        if environment["VIDEOPLAYER_ALLOW_PATH_MPV"] == "1" {
+            let pathEntries = (environment["PATH"] ?? "")
+                .split(separator: ":")
+                .map(String.init)
+            candidates.append(contentsOf: pathEntries.map { "\($0)/mpv" })
+        }
+
+        return candidates
+    }
+
+    private static func findExecutable() -> String? {
+        let fileManager = FileManager.default
+        return candidateExecutablePaths().first { fileManager.isExecutableFile(atPath: $0) }
     }
 }
 

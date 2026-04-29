@@ -132,9 +132,8 @@ final class PlayerViewController: NSViewController {
         alert.accessoryView = input
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let trimmedValue = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmedValue), let scheme = url.scheme, !scheme.isEmpty else {
-            showHUD("Invalid stream URL")
+        guard let url = NetworkStreamValidator.validatedURL(from: input.stringValue) else {
+            showHUD("Use HTTP, HTTPS, RTSP, or HLS")
             return
         }
 

@@ -31,7 +31,7 @@ final class UpdateChecker {
             guard httpResponse.statusCode != 404 else {
                 self?.showError(
                     "No releases are published yet.",
-                    detail: "Create a GitHub Release with a .dmg asset to enable update downloads.",
+                    detail: "Create a GitHub Release with a signed update manifest and .dmg asset to enable update downloads.",
                     presentingWindow: presentingWindow
                 )
                 return
@@ -60,7 +60,7 @@ final class UpdateChecker {
 
     private func handle(release: GitHubRelease, presentingWindow: NSWindow?) {
         let currentVersion = OpenSourceNotices.appVersion
-        guard isVersion(release.normalizedTag, newerThan: currentVersion) else {
+        guard VersionComparator.isVersion(release.normalizedTag, newerThan: currentVersion) else {
             showStatus(
                 "Video Player is up to date.",
                 detail: "Installed version: \(currentVersion)\nLatest release: \(release.tagName)",
@@ -69,19 +69,75 @@ final class UpdateChecker {
             return
         }
 
-        guard let asset = release.assets.first(where: { $0.isDiskImage }) ?? release.assets.first else {
-            showReleaseOnly(release, presentingWindow: presentingWindow)
+        guard let manifestAsset = release.assets.first(where: { $0.isUpdateManifest }) else {
+            showError(
+                "Update is missing a signed manifest.",
+                detail: "Publish \(UpdateSecurity.updateManifestAssetName) with the release so the app can verify the download before opening it.",
+                presentingWindow: presentingWindow
+            )
             return
         }
 
+        downloadManifest(from: manifestAsset.downloadURL, release: release, presentingWindow: presentingWindow)
+    }
+
+    private func downloadManifest(from url: URL, release: GitHubRelease, presentingWindow: NSWindow?) {
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("VideoPlayer/\(OpenSourceNotices.appVersion)", forHTTPHeaderField: "User-Agent")
+
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                self?.activeTask = nil
+            }
+
+            if let error {
+                self?.showError("Could not download update manifest.", detail: error.localizedDescription, presentingWindow: presentingWindow)
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode), let data else {
+                self?.showError("Could not download update manifest.", detail: "GitHub did not return the signed manifest.", presentingWindow: presentingWindow)
+                return
+            }
+
+            do {
+                let manifest = try UpdateSecurity.verifiedManifest(from: data)
+                try self?.validate(manifest: manifest, release: release)
+                self?.showUpdatePrompt(manifest: manifest, release: release, presentingWindow: presentingWindow)
+            } catch {
+                self?.showError("Update verification failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
+            }
+        }
+
+        activeTask = task
+        task.resume()
+    }
+
+    private func validate(manifest: UpdateManifest, release: GitHubRelease) throws {
+        guard manifest.normalizedTag == release.normalizedTag else {
+            throw UpdateCheckerError.manifestTagMismatch
+        }
+        guard VersionComparator.isVersion(manifest.version, newerThan: OpenSourceNotices.appVersion) else {
+            throw UpdateCheckerError.manifestIsNotNewer
+        }
+        guard UpdateSecurity.isDiskImageFileName(manifest.assetName) else {
+            throw UpdateCheckerError.invalidDiskImageName
+        }
+        guard release.assets.contains(where: { $0.downloadURL == manifest.assetURL && $0.isStrictDiskImage }) else {
+            throw UpdateCheckerError.manifestAssetMissing
+        }
+    }
+
+    private func showUpdatePrompt(manifest: UpdateManifest, release: GitHubRelease, presentingWindow: NSWindow?) {
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.messageText = "Update Available"
             alert.informativeText = """
-            Version \(release.tagName) is available.
+            Version \(manifest.tagName) is available.
 
-            Installed version: \(currentVersion)
-            Download: \(asset.name)
+            Installed version: \(OpenSourceNotices.appVersion)
+            Download: \(manifest.assetName)
             """
             alert.addButton(withTitle: "Download")
             alert.addButton(withTitle: "View Release")
@@ -90,7 +146,7 @@ final class UpdateChecker {
             let response = alert.runModal()
             switch response {
             case .alertFirstButtonReturn:
-                self.download(asset: asset, release: release, presentingWindow: presentingWindow)
+                self.downloadUpdate(manifest: manifest, release: release, presentingWindow: presentingWindow)
             case .alertSecondButtonReturn:
                 NSWorkspace.shared.open(release.htmlURL)
             default:
@@ -99,22 +155,8 @@ final class UpdateChecker {
         }
     }
 
-    private func showReleaseOnly(_ release: GitHubRelease, presentingWindow: NSWindow?) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Update Available"
-            alert.informativeText = "Version \(release.tagName) is available, but no downloadable asset was attached. Open the GitHub release page to get it."
-            alert.addButton(withTitle: "View Release")
-            alert.addButton(withTitle: "Cancel")
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
-                NSWorkspace.shared.open(release.htmlURL)
-            }
-        }
-    }
-
-    private func download(asset: GitHubAsset, release: GitHubRelease, presentingWindow: NSWindow?) {
-        var request = URLRequest(url: asset.downloadURL)
+    private func downloadUpdate(manifest: UpdateManifest, release: GitHubRelease, presentingWindow: NSWindow?) {
+        var request = URLRequest(url: manifest.assetURL)
         request.setValue("VideoPlayer/\(OpenSourceNotices.appVersion)", forHTTPHeaderField: "User-Agent")
 
         let task = URLSession.shared.downloadTask(with: request) { [weak self] temporaryURL, _, error in
@@ -132,11 +174,12 @@ final class UpdateChecker {
             }
 
             do {
-                let destination = try self?.moveDownloadedFile(from: temporaryURL, fileName: asset.name)
+                try UpdateSecurity.validateChecksum(forFileAt: temporaryURL, expectedSHA256: manifest.sha256)
+                let destination = try self?.moveDownloadedFile(from: temporaryURL, fileName: manifest.assetName)
                 guard let destination else { return }
                 self?.showDownloadedUpdate(destination, release: release, presentingWindow: presentingWindow)
             } catch {
-                self?.showError("Download failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
+                self?.showError("Download verification failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
             }
         }
 
@@ -149,7 +192,8 @@ final class UpdateChecker {
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
-        var destination = downloads.appendingPathComponent(fileName)
+        let safeFileName = UpdateSecurity.safeDownloadFileName(fileName)
+        var destination = downloads.appendingPathComponent(safeFileName)
         if FileManager.default.fileExists(atPath: destination.path) {
             let baseName = destination.deletingPathExtension().lastPathComponent
             let pathExtension = destination.pathExtension
@@ -168,7 +212,7 @@ final class UpdateChecker {
             let alert = NSAlert()
             alert.messageText = "Update Downloaded"
             alert.informativeText = """
-            \(release.tagName) was downloaded to:
+            \(release.tagName) was verified and downloaded to:
 
             \(destination.path)
             """
@@ -217,18 +261,6 @@ final class UpdateChecker {
         }
     }
 
-    private func isVersion(_ candidate: String, newerThan current: String) -> Bool {
-        let candidate = normalizedVersion(candidate)
-        let current = normalizedVersion(current)
-        return candidate.compare(current, options: .numeric) == .orderedDescending
-    }
-
-    private func normalizedVersion(_ version: String) -> String {
-        version
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-    }
-
     private static let fileNameDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
@@ -236,23 +268,37 @@ final class UpdateChecker {
     }()
 }
 
+private enum UpdateCheckerError: LocalizedError {
+    case manifestTagMismatch
+    case manifestIsNotNewer
+    case invalidDiskImageName
+    case manifestAssetMissing
+
+    var errorDescription: String? {
+        switch self {
+        case .manifestTagMismatch:
+            "The signed update manifest does not match the GitHub release tag."
+        case .manifestIsNotNewer:
+            "The signed update manifest is not newer than the installed app."
+        case .invalidDiskImageName:
+            "The signed update manifest does not point to a DMG file."
+        case .manifestAssetMissing:
+            "The signed update manifest does not match a DMG asset on this GitHub release."
+        }
+    }
+}
+
 private struct GitHubRelease: Decodable {
     let tagName: String
-    let name: String?
-    let body: String?
     let htmlURL: URL
     let assets: [GitHubAsset]
 
     var normalizedTag: String {
-        tagName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+        VersionComparator.normalizedVersion(tagName)
     }
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
-        case name
-        case body
         case htmlURL = "html_url"
         case assets
     }
@@ -263,11 +309,14 @@ private struct GitHubAsset: Decodable {
     let contentType: String?
     let downloadURL: URL
 
-    var isDiskImage: Bool {
-        let lowercaseName = name.lowercased()
-        return lowercaseName.hasSuffix(".dmg")
-            || contentType == "application/x-apple-diskimage"
-            || contentType == "application/octet-stream"
+    var isUpdateManifest: Bool {
+        name == UpdateSecurity.updateManifestAssetName
+    }
+
+    var isStrictDiskImage: Bool {
+        let contentType = contentType?.lowercased()
+        return UpdateSecurity.isDiskImageFileName(name)
+            && (contentType == nil || contentType == "application/x-apple-diskimage")
     }
 
     enum CodingKeys: String, CodingKey {

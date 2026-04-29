@@ -19,12 +19,12 @@ final class PlaybackStateStore {
     }
 
     func savePlaylist(_ playlist: [MediaItem], currentIndex: Int?) {
-        defaults.set(playlist.map(\.url.absoluteString), forKey: Key.playlist)
+        defaults.set(playlist.map { MediaPersistence.storageString(for: $0.url) }, forKey: Key.playlist)
         defaults.set(currentIndex, forKey: Key.currentIndex)
     }
 
     func loadPlaylist() -> ([MediaItem], Int?) {
-        let urls = defaults.stringArray(forKey: Key.playlist) ?? []
+        let urls = sanitizedURLStrings(forKey: Key.playlist)
         let items = urls.compactMap { value -> MediaItem? in
             guard let url = URL(string: value) else { return nil }
             if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
@@ -64,13 +64,14 @@ final class PlaybackStateStore {
 
     func addRecentMedia(_ item: MediaItem) {
         var values = defaults.stringArray(forKey: Key.recentMedia) ?? []
-        values.removeAll { $0 == item.url.absoluteString }
-        values.insert(item.url.absoluteString, at: 0)
+        let storageString = MediaPersistence.storageString(for: item.url)
+        values.removeAll { $0 == storageString || $0 == item.url.absoluteString }
+        values.insert(storageString, at: 0)
         defaults.set(Array(values.prefix(12)), forKey: Key.recentMedia)
     }
 
     func loadRecentMedia() -> [MediaItem] {
-        (defaults.stringArray(forKey: Key.recentMedia) ?? []).compactMap { value in
+        sanitizedURLStrings(forKey: Key.recentMedia).compactMap { value in
             guard let url = URL(string: value) else { return nil }
             if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
                 return nil
@@ -102,26 +103,51 @@ final class PlaybackStateStore {
     }
 
     func position(for item: MediaItem) -> Double {
-        positions()[item.persistenceKey] ?? 0
+        positions()[MediaPersistence.storageString(for: item.url)] ?? 0
     }
 
     func savePosition(_ seconds: Double, for item: MediaItem) {
         var positions = positions()
+        let key = MediaPersistence.storageString(for: item.url)
         if seconds > 5 {
-            positions[item.persistenceKey] = seconds
+            positions[key] = seconds
         } else {
-            positions.removeValue(forKey: item.persistenceKey)
+            positions.removeValue(forKey: key)
         }
+        positions.removeValue(forKey: item.url.absoluteString)
         defaults.set(positions, forKey: Key.positions)
     }
 
     func clearPosition(for item: MediaItem) {
         var positions = positions()
-        positions.removeValue(forKey: item.persistenceKey)
+        positions.removeValue(forKey: MediaPersistence.storageString(for: item.url))
+        positions.removeValue(forKey: item.url.absoluteString)
         defaults.set(positions, forKey: Key.positions)
     }
 
+    private func sanitizedURLStrings(forKey key: String) -> [String] {
+        let values = defaults.stringArray(forKey: key) ?? []
+        let sanitizedValues = values.map(MediaPersistence.storageString(forStoredValue:))
+        if sanitizedValues != values {
+            defaults.set(sanitizedValues, forKey: key)
+        }
+        return sanitizedValues
+    }
+
     private func positions() -> [String: Double] {
-        defaults.dictionary(forKey: Key.positions) as? [String: Double] ?? [:]
+        let storedPositions = defaults.dictionary(forKey: Key.positions) as? [String: Double] ?? [:]
+        var sanitizedPositions: [String: Double] = [:]
+        var didSanitize = false
+
+        for (key, value) in storedPositions {
+            let sanitizedKey = MediaPersistence.storageString(forStoredValue: key)
+            didSanitize = didSanitize || sanitizedKey != key
+            sanitizedPositions[sanitizedKey] = value
+        }
+
+        if didSanitize {
+            defaults.set(sanitizedPositions, forKey: Key.positions)
+        }
+        return sanitizedPositions
     }
 }

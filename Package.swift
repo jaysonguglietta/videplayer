@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "VideoPlayer",
             path: "Sources/VideoPlayer"
+        ),
+        .testTarget(
+            name: "VideoPlayerTests",
+            dependencies: ["VideoPlayer"],
+            path: "Tests/VideoPlayerTests"
         )
     ]
 )

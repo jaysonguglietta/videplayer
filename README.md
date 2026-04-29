@@ -35,7 +35,7 @@ A native macOS media player inspired by VLC: drag in media, build a playlist, pl
 
 The app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF.
 
-For VLC-like broad codec coverage and 200% volume boost, the app uses LibVLC. The build script bundles the VLC engine from `/Applications/VLC.app` into the final app bundle when VLC is installed on the build machine. During development, the app can also use `/Applications/VLC.app` directly.
+For VLC-like broad codec coverage and 200% volume boost, the app uses LibVLC. The build script downloads the pinned official VLC 3.0.23 macOS DMG, verifies its SHA-256 checksum, and bundles that runtime into the final app bundle. During development, the app can also use `/Applications/VLC.app` directly.
 
 If VLC is not installed, `mpv` can also be used as a fallback external playback engine:
 
@@ -43,7 +43,7 @@ If VLC is not installed, `mpv` can also be used as a fallback external playback 
 brew install mpv
 ```
 
-When `mpv` is available at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, `/Applications/mpv.app/Contents/MacOS/mpv`, or in `PATH`, the app automatically uses it for advanced formats if VLC is unavailable.
+When `mpv` is available at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`, the app can use it for advanced formats if VLC is unavailable. `PATH` lookup is disabled by default; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` only for trusted development shells.
 
 ## Documentation
 
@@ -74,11 +74,13 @@ The release DMG is created at `Build/Video Player.dmg`.
 
 ## Updates and Licenses
 
-Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater downloads the newest `.dmg` release asset to Downloads when a newer version is available.
+Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater now requires a signed `video-player-update.json` manifest, verifies the manifest against the app's pinned public key, downloads the referenced `.dmg`, and verifies its SHA-256 before offering to open it.
 
-To publish an update, log in with `gh auth login`, bump `APP_VERSION` in [Scripts/build_app.sh](Scripts/build_app.sh), then run:
+To publish an update, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), configure Developer ID signing and notarization, then run:
 
 ```sh
+export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export NOTARY_PROFILE="your-notarytool-profile"
 ./Scripts/publish_release.sh
 ```
 

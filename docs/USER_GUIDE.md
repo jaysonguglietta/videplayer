@@ -4,7 +4,7 @@
 
 Use File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Supported local media includes MP4, M4V, MOV, MK4, MKV, AVI, WebM, FLV, WMV, MPEG, TS, MP3, M4A, AAC, WAV, AIFF, CAF, FLAC, OGG, and OPUS.
 
-Use File > Open Network Stream for stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists.
+Use File > Open Network Stream for stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected.
 
 Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and LibVLC metadata such as show, season, episode, artwork, language, and track summaries when available. Press Space, K, the play button, or double-click the playlist row to start.
 
@@ -76,7 +76,7 @@ Use Playback > Take Screenshot to save the current frame. Screenshots are writte
 
 ## Resume and Persistence
 
-The app remembers playback position per file or stream. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, volume, and playback speed when the app opens.
+The app remembers playback position per file or stream. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, volume, and playback speed when the app opens. Network stream credentials, query strings, and fragments are redacted before they are saved.
 
 ## On-Screen HUD
 
@@ -84,7 +84,7 @@ The player briefly shows an on-screen HUD for common actions such as seeking, vo
 
 ## Updates and Licenses
 
-Use Video Player > Check for Updates or Help > Check for Updates to check the GitHub repository releases. If a newer release with a downloadable `.dmg` is available, the app downloads it to Downloads and offers to open it or reveal it in Finder.
+Use Video Player > Check for Updates or Help > Check for Updates to check the GitHub repository releases. If a newer release with a signed update manifest is available, the app verifies the manifest, downloads the `.dmg`, verifies its SHA-256 checksum, and then offers to open it or reveal it in Finder.
 
 Use Video Player > About Video Player for app details. Use Video Player > Open Source Licenses or Help > Open Source Licenses to view bundled/open source software notices for Video Player, VLC/libVLC, and optional mpv support.
 
