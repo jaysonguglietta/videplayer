@@ -34,7 +34,7 @@ Build/Video Player.app
 
 The script packages only the app binary and resources owned by this project. It intentionally does not download or bundle VLC/libVLC/mpv, which keeps the sold DMG limited to the MIT-licensed app plus Apple platform frameworks.
 
-## VLC Runtime Lookup
+## Optional VLC Runtime Lookup
 
 At runtime, the app searches for LibVLC in this order:
 
