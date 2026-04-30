@@ -892,15 +892,11 @@ private final class DynamicLibVLC {
     }
 
     static func findLibrary() -> URL? {
-        let bundledLibrary = Bundle.main.resourceURL?
-            .appendingPathComponent("VLC/lib/libvlc.dylib")
-            .path
         let candidates = [
-            bundledLibrary,
             "/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib",
             "/opt/homebrew/lib/libvlc.dylib",
             "/usr/local/lib/libvlc.dylib"
-        ].compactMap(\.self)
+        ]
         let fileManager = FileManager.default
         return candidates
             .map { URL(fileURLWithPath: $0) }

@@ -3,15 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
-BUNDLE_ID="local.video-player.app"
-APP_VERSION="${APP_VERSION:-0.1.2}"
-APP_BUILD="${APP_BUILD:-3}"
+BUNDLE_ID="${BUNDLE_ID:-com.jaysonguglietta.videoplayer}"
+APP_VERSION="${APP_VERSION:-0.1.3}"
+APP_BUILD="${APP_BUILD:-4}"
 BUILD_DIR="$ROOT_DIR/Build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-VLC_RUNTIME_DIR="$BUILD_DIR/ThirdParty/VLC-${VLC_VERSION:-3.0.23}-${VLC_ARCH:-arm64}/runtime"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayer.entitlements"
 
@@ -104,25 +103,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-"$ROOT_DIR/Scripts/fetch_vlc_runtime.sh"
-
-if [[ -d "$VLC_RUNTIME_DIR/lib" && -d "$VLC_RUNTIME_DIR/plugins" ]]; then
-    mkdir -p "$RESOURCES_DIR/VLC"
-    ditto "$VLC_RUNTIME_DIR/lib" "$RESOURCES_DIR/VLC/lib"
-    ditto "$VLC_RUNTIME_DIR/plugins" "$RESOURCES_DIR/VLC/plugins"
-    if [[ -d "$VLC_RUNTIME_DIR/share" ]]; then
-        ditto "$VLC_RUNTIME_DIR/share" "$RESOURCES_DIR/VLC/share"
-    fi
-    echo "Bundled pinned VLC runtime from $VLC_RUNTIME_DIR"
-else
-    echo "Pinned VLC runtime not found; the app will use system VLC/mpv if available at runtime."
-fi
+echo "No third-party media engines are bundled. Optional user-installed VLC/mpv can be used at runtime."
 
 if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
-    while IFS= read -r library; do
-        codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$library"
-    done < <(find "$APP_DIR/Contents/Resources/VLC" -type f -name "*.dylib" 2>/dev/null || true)
-
     codesign --force \
         --options runtime \
         --timestamp \

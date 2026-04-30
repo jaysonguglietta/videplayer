@@ -1296,7 +1296,7 @@ final class PlayerViewController: NSViewController {
 
         currentEngine = .none
         let message = error?.localizedDescription ?? "This file could not be opened by macOS."
-        engineLabel.stringValue = "\(message) Install VLC or mpv for VLC-like codec coverage and 200% volume boost."
+        engineLabel.stringValue = "\(message) Install VLC or mpv separately for broader codec coverage and 200% volume boost."
         refreshControls()
     }
 

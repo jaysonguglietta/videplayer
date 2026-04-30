@@ -1,10 +1,10 @@
 # Video Player
 
-A native macOS media player inspired by VLC: drag in media, build a playlist, play/pause, seek, boost volume, switch audio/subtitle tracks, load external subtitles, resume playback, open network streams, and go full screen.
+A native macOS media player: drag in media, build a playlist, play/pause, seek, boost volume, switch audio/subtitle tracks, load external subtitles, resume playback, open network streams, and go full screen.
 
 ## Highlights
 
-- VLC codec engine support for MKV, MP4, AVI, WebM, FLV, FLAC, OGG, OPUS, and more.
+- Optional user-installed VLC/libVLC support for MKV, AVI, WebM, FLV, FLAC, OGG, OPUS, and more.
 - 10-second rewind and fast-forward controls.
 - 200% volume boost with slider and mouse-wheel control over the player area.
 - Embedded audio/subtitle track selectors for VLC-backed playback.
@@ -33,9 +33,9 @@ A native macOS media player inspired by VLC: drag in media, build a playlist, pl
 
 ## Format support
 
-The app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF.
+The sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF.
 
-For VLC-like broad codec coverage and 200% volume boost, the app uses LibVLC. The build script downloads the pinned official VLC 3.0.23 macOS DMG, verifies its SHA-256 checksum, and bundles that runtime into the final app bundle. During development, the app can also use `/Applications/VLC.app` directly.
+For broad codec coverage and 200% volume boost, the app can use a copy of VLC/libVLC that the user installed separately. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
 
 If VLC is not installed, `mpv` can also be used as a fallback external playback engine:
 
@@ -43,12 +43,13 @@ If VLC is not installed, `mpv` can also be used as a fallback external playback 
 brew install mpv
 ```
 
-When `mpv` is available at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`, the app can use it for advanced formats if VLC is unavailable. `PATH` lookup is disabled by default; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` only for trusted development shells.
+When `mpv` is installed separately by the user at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`, the app can use it for advanced formats if VLC is unavailable. `PATH` lookup is disabled by default; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` only for trusted development shells.
 
 ## Documentation
 
 - [User guide](docs/USER_GUIDE.md)
 - [Development and packaging](docs/DEVELOPMENT.md)
+- [Commercial distribution checklist](docs/COMMERCIAL_DISTRIBUTION.md)
 
 ## Run from source
 
@@ -86,4 +87,4 @@ export NOTARY_PROFILE="your-notarytool-profile"
 
 Use Video Player > Open Source Licenses or Help > Open Source Licenses for license and open source software notices.
 
-Video Player's application source code is released under the [MIT License](LICENSE). Bundled and optional media engines such as VLC/libVLC and mpv have their own upstream license terms.
+Video Player's application source code is released under the [MIT License](LICENSE). The distributed app does not bundle VLC/libVLC, mpv, FFmpeg, or other third-party media engines; optional user-installed integrations keep their own upstream license terms.

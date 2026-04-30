@@ -113,7 +113,7 @@ enum MPVBridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            "mpv is not installed. Install it with Homebrew to enable VLC-like MKV, WebM, AVI, FLV, and broad codec playback."
+            "mpv is not installed. Install it separately to enable broad MKV, WebM, AVI, FLV, and codec playback."
         }
     }
 }

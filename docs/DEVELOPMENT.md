@@ -6,6 +6,7 @@
 - `Sources/VideoPlayer`: AppKit app source.
 - `Scripts/build_app.sh`: Release build and `.app` bundle packaging.
 - `Scripts/build_release_dmg.sh`: Builds the app bundle and wraps it in a drag-install DMG.
+- `Packaging/VideoPlayer.entitlements`: Hardened runtime entitlements for optional user-installed media engine loading.
 - `LICENSE`: MIT License for the Video Player application source code.
 - `docs`: User and developer documentation.
 
@@ -15,7 +16,7 @@
 swift run
 ```
 
-The app uses AVFoundation for Apple-native playback and dynamically loads LibVLC when available.
+The app uses AVFoundation for Apple-native playback and can dynamically load a user-installed LibVLC when available. The commercial distribution does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines.
 
 LibVLC integration is kept behind `VLCBridge`. New symbols should be loaded dynamically and treated as optional unless playback cannot work without them; this keeps the app tolerant of different VLC 3.x builds.
 
@@ -31,16 +32,15 @@ The script creates:
 Build/Video Player.app
 ```
 
-The script calls `Scripts/fetch_vlc_runtime.sh`, which downloads the pinned official VLC 3.0.23 macOS DMG, verifies its SHA-256 checksum, mounts it, and copies VLC's `lib`, `plugins`, and `share` directories into `Contents/Resources/VLC`. This keeps release builds reproducible instead of copying whatever VLC app happens to be installed locally.
+The script packages only the app binary and resources owned by this project. It intentionally does not download or bundle VLC/libVLC/mpv, which keeps the sold DMG limited to the MIT-licensed app plus Apple platform frameworks.
 
 ## VLC Runtime Lookup
 
 At runtime, the app searches for LibVLC in this order:
 
-1. `Video Player.app/Contents/Resources/VLC/lib/libvlc.dylib`
-2. `/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib`
-3. `/opt/homebrew/lib/libvlc.dylib`
-4. `/usr/local/lib/libvlc.dylib`
+1. `/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib`
+2. `/opt/homebrew/lib/libvlc.dylib`
+3. `/usr/local/lib/libvlc.dylib`
 
 If LibVLC is unavailable, the app can fall back to `mpv` for advanced formats when `mpv` is installed at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`. `PATH` lookup is disabled by default to avoid path hijacking; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` only in trusted development environments.
 
@@ -63,7 +63,7 @@ export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 ```
 
-`Scripts/build_app.sh` signs nested VLC libraries, signs the app with hardened runtime, and uses `Packaging/VideoPlayer.entitlements` to allow dynamic VLC loading. `Scripts/build_release_dmg.sh` signs the DMG, submits it to `notarytool`, staples the notarization ticket, and validates the staple when `NOTARY_PROFILE` is set. Use `REQUIRE_NOTARIZATION=1` to fail the release build if notarization is not configured.
+`Scripts/build_app.sh` signs the app with hardened runtime and uses `Packaging/VideoPlayer.entitlements` to allow optional dynamic loading of user-installed media engines. `Scripts/build_release_dmg.sh` signs the DMG, submits it to `notarytool`, staples the notarization ticket, and validates the staple when `NOTARY_PROFILE` is set. Use `REQUIRE_NOTARIZATION=1` to fail the release build if notarization is not configured.
 
 ## Update Checks
 
@@ -93,9 +93,9 @@ The script builds `Build/Video Player.dmg`, creates a signed update manifest, re
 
 Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore`. Network stream credentials, query strings, and fragments are redacted before URL persistence to avoid storing signed stream tokens.
 
-## LibVLC Features
+## Optional LibVLC Features
 
-The app now uses LibVLC for more than playback:
+When a user has VLC installed separately, the app can use LibVLC for more than playback:
 
 - metadata parsing before playback for richer movie, TV, artwork, language, and track details
 - chapter discovery and chapter selection
@@ -105,7 +105,7 @@ The app now uses LibVLC for more than playback:
 
 ## Licensing
 
-Video Player's application source code is released under the MIT License. VLC/libVLC, mpv, Apple frameworks, and other upstream components keep their own license terms; keep the in-app Open Source Licenses notice current when adding or bundling dependencies.
+Video Player's application source code is released under the MIT License. The commercial distribution should not bundle VLC/libVLC, mpv, FFmpeg, or other third-party media engines unless you are prepared to satisfy those upstream license terms. Optional user-installed integrations keep their own upstream license terms.
 
 ## Validation
 
