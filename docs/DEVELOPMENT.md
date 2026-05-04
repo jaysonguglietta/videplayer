@@ -16,14 +16,14 @@
 swift run
 ```
 
-The app uses AVFoundation for Apple-native playback and can dynamically load a user-installed LibVLC when available. The commercial distribution does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines.
+The app uses AVFoundation for Apple-native playback and can dynamically load a user-installed LibVLC when enabled and trusted. The commercial distribution does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines.
 
-LibVLC integration is kept behind `VLCBridge`. New symbols should be loaded dynamically and treated as optional unless playback cannot work without them; this keeps the app tolerant of different VLC 3.x builds.
+LibVLC integration is kept behind `VLCBridge`. New symbols should be loaded dynamically and treated as optional unless playback cannot work without them; this keeps the app tolerant of different VLC 3.x builds. External engines are disabled by default and must pass configured Team ID validation unless explicitly running a trusted development shell.
 
 ## Build the App Bundle
 
 ```sh
-./Scripts/build_app.sh
+DEVELOPMENT_BUILD=1 ./Scripts/build_app.sh
 ```
 
 The script creates:
@@ -36,13 +36,13 @@ The script packages only the app binary and resources owned by this project. It 
 
 ## Optional VLC Runtime Lookup
 
-At runtime, the app searches for LibVLC in this order:
+At runtime, external engines are considered only when the user enables Playback > Enable External VLC/mpv Engines. The app then searches for LibVLC in this order and verifies the containing code signature Team ID against `VPTrustedExternalEngineTeamIDs`:
 
 1. `/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib`
 2. `/opt/homebrew/lib/libvlc.dylib`
 3. `/usr/local/lib/libvlc.dylib`
 
-If LibVLC is unavailable, the app can fall back to `mpv` for advanced formats when `mpv` is installed at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`. `PATH` lookup is disabled by default to avoid path hijacking; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` only in trusted development environments.
+If LibVLC is unavailable, the app can fall back to `mpv` for advanced formats when `mpv` is installed at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv` and passes the same Team ID trust check. `PATH` lookup is disabled by default to avoid path hijacking; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` and `VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES=1` only in trusted development environments.
 
 ## Build a Release DMG
 
@@ -61,9 +61,12 @@ The DMG includes the app and an `/Applications` shortcut. For public distributio
 ```sh
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
+export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
+export UPDATE_SIGNING_PRIVATE_KEY="$HOME/.videoplayer-release/update-signing-private-key.pem"
+export TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="OPTIONAL_TEAM_ID,OPTIONAL_TEAM_ID"
 ```
 
-`Scripts/build_app.sh` signs the app with hardened runtime and uses `Packaging/VideoPlayer.entitlements` to allow optional dynamic loading of user-installed media engines. `Scripts/build_release_dmg.sh` signs the DMG, submits it to `notarytool`, staples the notarization ticket, and validates the staple when `NOTARY_PROFILE` is set. Use `REQUIRE_NOTARIZATION=1` to fail the release build if notarization is not configured.
+`Scripts/build_app.sh` signs the app with hardened runtime and uses `Packaging/VideoPlayer.entitlements` to allow optional dynamic loading of user-installed media engines. `Scripts/build_release_dmg.sh` signs the DMG, submits it to `notarytool`, staples the notarization ticket, and validates the staple. Direct-distribution builds require Developer ID signing and notarization by default. Use `DEVELOPMENT_BUILD=1` only for local ad-hoc testing.
 
 ## Update Checks
 
@@ -73,13 +76,13 @@ The in-app updater checks:
 https://api.github.com/repos/jaysonguglietta/videplayer/releases/latest
 ```
 
-It compares the latest release tag against `CFBundleShortVersionString`, downloads the release's `video-player-update.json` manifest, verifies that manifest against the public key pinned in `UpdateManifest.swift`, downloads the signed manifest's `.dmg`, then verifies the DMG's SHA-256 before offering to open it.
+It compares the latest release tag against `CFBundleShortVersionString`, downloads the release's `video-player-update.json` manifest, verifies that manifest against the public key pinned in `UpdateManifest.swift`, downloads the signed manifest's `.dmg`, verifies the DMG's SHA-256, verifies the configured Developer ID Team ID, and runs Gatekeeper assessment before offering to open it.
 
 To publish an update:
 
 1. Bump `APP_VERSION` and `APP_BUILD` in `Scripts/build_app.sh`.
-2. Keep `.release/update-signing-private-key.pem` private and backed up. The matching public key is pinned in `Sources/VideoPlayer/UpdateManifest.swift`.
-3. Configure `CODE_SIGN_IDENTITY` and `NOTARY_PROFILE`.
+2. Keep `$HOME/.videoplayer-release/update-signing-private-key.pem` private, outside synced project folders, and backed up securely. The matching public key is pinned in `Sources/VideoPlayer/UpdateManifest.swift`.
+3. Configure `CODE_SIGN_IDENTITY`, `NOTARY_PROFILE`, and `EXPECTED_DEVELOPER_TEAM_ID`.
 4. Log in with `gh auth login`.
 5. Run:
 
@@ -87,11 +90,15 @@ To publish an update:
 ./Scripts/publish_release.sh
 ```
 
-The script builds `Build/Video Player.dmg`, creates a signed update manifest, refuses to publish without Developer ID signing/notarization unless `ALLOW_UNNOTARIZED_RELEASE=1` is set, creates or updates a semver-style GitHub Release such as `v0.2.0`, and attaches both the DMG and manifest.
+The script builds `Build/Video Player.dmg`, creates a signed update manifest, refuses to publish without Developer ID signing/notarization, refuses update private keys inside the repository, refuses `ALLOW_UNNOTARIZED_RELEASE=1` on `main`, creates or updates a semver-style GitHub Release such as `v0.2.0`, and attaches both the DMG and manifest.
 
 ## State Storage
 
-Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore`. Network stream credentials, query strings, and fragments are redacted before URL persistence to avoid storing signed stream tokens.
+Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore` when history saving is enabled. Network stream credentials, query strings, and fragments are redacted before URL persistence to avoid storing signed stream tokens. Privacy controls can disable saved playback history, clear history on quit, and clear all stored playback history.
+
+## Network Stream Policy
+
+`NetworkStreamValidator` accepts only HTTP, HTTPS, RTSP, and RTSPS. Loopback, link-local, multicast, RFC1918, CGNAT, benchmark ranges, `.local`, and `localhost` targets are blocked by default to reduce client-side SSRF and local-network probing risk. Users can enable Privacy > Allow Private Network Streams for trusted LAN cameras or local streams.
 
 ## Optional LibVLC Features
 
@@ -114,7 +121,7 @@ Use this before committing:
 ```sh
 swift build
 swift test
-./Scripts/build_app.sh
-./Scripts/build_release_dmg.sh
+DEVELOPMENT_BUILD=1 ./Scripts/build_app.sh
+DEVELOPMENT_BUILD=1 ./Scripts/build_release_dmg.sh
 plutil -lint "Build/Video Player.app/Contents/Info.plist"
 ```

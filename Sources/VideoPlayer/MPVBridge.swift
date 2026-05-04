@@ -103,7 +103,10 @@ final class MPVBridge {
 
     private static func findExecutable() -> String? {
         let fileManager = FileManager.default
-        return candidateExecutablePaths().first { fileManager.isExecutableFile(atPath: $0) }
+        return candidateExecutablePaths().first {
+            fileManager.isExecutableFile(atPath: $0)
+                && ExternalMediaEngineTrust.isEngineAllowed(at: URL(fileURLWithPath: $0))
+        }
     }
 }
 
@@ -113,7 +116,7 @@ enum MPVBridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            "mpv is not installed. Install it separately to enable broad MKV, WebM, AVI, FLV, and codec playback."
+            "mpv is not installed, disabled, or not trusted. Enable trusted external media engines to use broad MKV, WebM, AVI, FLV, and codec playback."
         }
     }
 }

@@ -900,7 +900,10 @@ private final class DynamicLibVLC {
         let fileManager = FileManager.default
         return candidates
             .map { URL(fileURLWithPath: $0) }
-            .first { fileManager.isReadableFile(atPath: $0.path) }
+            .first {
+                fileManager.isReadableFile(atPath: $0.path)
+                    && ExternalMediaEngineTrust.isEngineAllowed(at: $0)
+            }
     }
 
     private static func findCoreLibrary(for libraryURL: URL) -> URL? {
@@ -958,7 +961,7 @@ enum VLCBridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            "VLC is not installed. Install VLC or mpv to enable broad MKV, WebM, AVI, FLV, and codec playback."
+            "VLC is not installed, disabled, or not trusted. Enable trusted external media engines to use broad MKV, WebM, AVI, FLV, and codec playback."
         case .loadFailed(let detail):
             "VLC could not be loaded: \(detail)"
         case .playbackFailed(let detail):

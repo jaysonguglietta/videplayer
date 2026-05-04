@@ -4,24 +4,39 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
 REPO="${GITHUB_REPOSITORY:-jaysonguglietta/videplayer}"
-UPDATE_SIGNING_PRIVATE_KEY="${UPDATE_SIGNING_PRIVATE_KEY:-$ROOT_DIR/.release/update-signing-private-key.pem}"
+UPDATE_SIGNING_PRIVATE_KEY="${UPDATE_SIGNING_PRIVATE_KEY:-$HOME/.videoplayer-release/update-signing-private-key.pem}"
 MANIFEST_NAME="video-player-update.json"
 DRY_RUN="${DRY_RUN:-0}"
 ALLOW_UNNOTARIZED_RELEASE="${ALLOW_UNNOTARIZED_RELEASE:-0}"
+EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-${APPLE_TEAM_ID:-}}"
+CURRENT_BRANCH="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 
 if [[ "$DRY_RUN" != "1" && "$ALLOW_UNNOTARIZED_RELEASE" != "1" ]]; then
-    if [[ -z "${CODE_SIGN_IDENTITY:-}" || -z "${NOTARY_PROFILE:-}" ]]; then
+    if [[ -z "${CODE_SIGN_IDENTITY:-}" || -z "${NOTARY_PROFILE:-}" || -z "$EXPECTED_DEVELOPER_TEAM_ID" ]]; then
         echo "Refusing to publish without Developer ID signing and notarization." >&2
-        echo "Set CODE_SIGN_IDENTITY and NOTARY_PROFILE, or set ALLOW_UNNOTARIZED_RELEASE=1 for private testing only." >&2
+        echo "Set CODE_SIGN_IDENTITY, NOTARY_PROFILE, and EXPECTED_DEVELOPER_TEAM_ID." >&2
         exit 1
     fi
 fi
 
+if [[ "$ALLOW_UNNOTARIZED_RELEASE" == "1" && "$CURRENT_BRANCH" == "main" ]]; then
+    echo "Refusing ALLOW_UNNOTARIZED_RELEASE=1 on main." >&2
+    exit 1
+fi
+
+case "$UPDATE_SIGNING_PRIVATE_KEY" in
+    "$ROOT_DIR"/*)
+        echo "Refusing to use an update signing private key inside the repository or synced workspace." >&2
+        echo "Move it outside the project, for example: $HOME/.videoplayer-release/update-signing-private-key.pem" >&2
+        exit 1
+        ;;
+esac
+
 if [[ ! -f "$UPDATE_SIGNING_PRIVATE_KEY" ]]; then
     echo "Missing update signing private key: $UPDATE_SIGNING_PRIVATE_KEY" >&2
     echo "Generate one with:" >&2
-    echo "  mkdir -p .release" >&2
-    echo "  openssl ecparam -name prime256v1 -genkey -noout -out .release/update-signing-private-key.pem" >&2
+    echo "  mkdir -p \"$HOME/.videoplayer-release\"" >&2
+    echo "  openssl ecparam -name prime256v1 -genkey -noout -out \"$HOME/.videoplayer-release/update-signing-private-key.pem\"" >&2
     echo "Then update Sources/VideoPlayer/UpdateManifest.swift with the matching public key." >&2
     exit 1
 fi

@@ -19,11 +19,19 @@ final class PlaybackStateStore {
     }
 
     func savePlaylist(_ playlist: [MediaItem], currentIndex: Int?) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else {
+            defaults.removeObject(forKey: Key.playlist)
+            defaults.removeObject(forKey: Key.currentIndex)
+            return
+        }
         defaults.set(playlist.map { MediaPersistence.storageString(for: $0.url) }, forKey: Key.playlist)
         defaults.set(currentIndex, forKey: Key.currentIndex)
     }
 
     func loadPlaylist() -> ([MediaItem], Int?) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else {
+            return ([], nil)
+        }
         let urls = sanitizedURLStrings(forKey: Key.playlist)
         let items = urls.compactMap { value -> MediaItem? in
             guard let url = URL(string: value) else { return nil }
@@ -63,6 +71,7 @@ final class PlaybackStateStore {
     }
 
     func addRecentMedia(_ item: MediaItem) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return }
         var values = defaults.stringArray(forKey: Key.recentMedia) ?? []
         let storageString = MediaPersistence.storageString(for: item.url)
         values.removeAll { $0 == storageString || $0 == item.url.absoluteString }
@@ -103,10 +112,12 @@ final class PlaybackStateStore {
     }
 
     func position(for item: MediaItem) -> Double {
-        positions()[MediaPersistence.storageString(for: item.url)] ?? 0
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return 0 }
+        return positions()[MediaPersistence.storageString(for: item.url)] ?? 0
     }
 
     func savePosition(_ seconds: Double, for item: MediaItem) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return }
         var positions = positions()
         let key = MediaPersistence.storageString(for: item.url)
         if seconds > 5 {
@@ -123,6 +134,49 @@ final class PlaybackStateStore {
         positions.removeValue(forKey: MediaPersistence.storageString(for: item.url))
         positions.removeValue(forKey: item.url.absoluteString)
         defaults.set(positions, forKey: Key.positions)
+    }
+
+    func savePlaybackHistoryEnabled() -> Bool {
+        PrivacySettings.savePlaybackHistory(defaults: defaults)
+    }
+
+    func setSavePlaybackHistoryEnabled(_ enabled: Bool) {
+        PrivacySettings.setSavePlaybackHistory(enabled, defaults: defaults)
+        if !enabled {
+            clearPlaybackHistory()
+        }
+    }
+
+    func clearHistoryOnQuitEnabled() -> Bool {
+        PrivacySettings.clearHistoryOnQuit(defaults: defaults)
+    }
+
+    func setClearHistoryOnQuitEnabled(_ enabled: Bool) {
+        PrivacySettings.setClearHistoryOnQuit(enabled, defaults: defaults)
+    }
+
+    func privateNetworkStreamsEnabled() -> Bool {
+        PrivacySettings.allowPrivateNetworkStreams(defaults: defaults)
+    }
+
+    func setPrivateNetworkStreamsEnabled(_ enabled: Bool) {
+        PrivacySettings.setAllowPrivateNetworkStreams(enabled, defaults: defaults)
+    }
+
+    func externalMediaEnginesEnabled() -> Bool {
+        PrivacySettings.externalMediaEnginesEnabled(defaults: defaults)
+    }
+
+    func setExternalMediaEnginesEnabled(_ enabled: Bool) {
+        PrivacySettings.setExternalMediaEnginesEnabled(enabled, defaults: defaults)
+    }
+
+    func clearPlaybackHistory() {
+        defaults.removeObject(forKey: Key.playlist)
+        defaults.removeObject(forKey: Key.currentIndex)
+        defaults.removeObject(forKey: Key.positions)
+        defaults.removeObject(forKey: Key.recentMedia)
+        defaults.removeObject(forKey: Key.libraryFolders)
     }
 
     private func sanitizedURLStrings(forKey key: String) -> [String] {

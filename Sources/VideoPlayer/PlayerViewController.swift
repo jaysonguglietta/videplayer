@@ -5,6 +5,8 @@ import AVKit
 final class PlayerViewController: NSViewController {
     private let maximumVolume = 200.0
     private let defaultVolume = 70.0
+    private let maximumScannedMediaFiles = 5_000
+    private let maximumEnumeratedFolderItems = 20_000
     private let avPlayer = AVPlayer()
     private let vlcBridge = VLCBridge()
     private let mpvBridge = MPVBridge()
@@ -86,8 +88,12 @@ final class PlayerViewController: NSViewController {
     }
 
     deinit {
-        saveCurrentPosition()
-        savePlaylistState()
+        if stateStore.clearHistoryOnQuitEnabled() {
+            stateStore.clearPlaybackHistory()
+        } else {
+            saveCurrentPosition()
+            savePlaylistState()
+        }
         if let scrollWheelMonitor {
             NSEvent.removeMonitor(scrollWheelMonitor)
         }
@@ -132,8 +138,11 @@ final class PlayerViewController: NSViewController {
         alert.accessoryView = input
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard let url = NetworkStreamValidator.validatedURL(from: input.stringValue) else {
-            showHUD("Use HTTP, HTTPS, RTSP, or HLS")
+        guard let url = NetworkStreamValidator.validatedURL(
+            from: input.stringValue,
+            allowPrivateNetworkHosts: stateStore.privateNetworkStreamsEnabled()
+        ) else {
+            showHUD("Use public HTTP, HTTPS, RTSP, or HLS")
             return
         }
 
@@ -167,6 +176,64 @@ final class PlayerViewController: NSViewController {
     func clearRecentMedia() {
         stateStore.clearRecentMedia()
         showHUD("Recent files cleared")
+    }
+
+    func savePlaybackHistoryEnabled() -> Bool {
+        stateStore.savePlaybackHistoryEnabled()
+    }
+
+    @objc func toggleSavePlaybackHistory(_ sender: Any? = nil) {
+        let enabled = !stateStore.savePlaybackHistoryEnabled()
+        stateStore.setSavePlaybackHistoryEnabled(enabled)
+        if !enabled {
+            playlist.removeAll()
+            currentIndex = nil
+            tableView.reloadData()
+            updateEmptyState()
+        }
+        showHUD(enabled ? "History saving on" : "History saving off")
+    }
+
+    func clearHistoryOnQuitEnabled() -> Bool {
+        stateStore.clearHistoryOnQuitEnabled()
+    }
+
+    @objc func toggleClearHistoryOnQuit(_ sender: Any? = nil) {
+        let enabled = !stateStore.clearHistoryOnQuitEnabled()
+        stateStore.setClearHistoryOnQuitEnabled(enabled)
+        showHUD(enabled ? "History clears on quit" : "History kept after quit")
+    }
+
+    func privateNetworkStreamsEnabled() -> Bool {
+        stateStore.privateNetworkStreamsEnabled()
+    }
+
+    @objc func togglePrivateNetworkStreams(_ sender: Any? = nil) {
+        let enabled = !stateStore.privateNetworkStreamsEnabled()
+        stateStore.setPrivateNetworkStreamsEnabled(enabled)
+        showHUD(enabled ? "Private streams allowed" : "Private streams blocked")
+    }
+
+    func externalMediaEnginesEnabled() -> Bool {
+        stateStore.externalMediaEnginesEnabled()
+    }
+
+    @objc func toggleExternalMediaEngines(_ sender: Any? = nil) {
+        let enabled = !stateStore.externalMediaEnginesEnabled()
+        stateStore.setExternalMediaEnginesEnabled(enabled)
+        if !enabled, currentEngine == .vlc || currentEngine == .mpv {
+            stopPlayback()
+        }
+        showHUD(enabled ? "External engines enabled" : "External engines disabled")
+    }
+
+    @objc func clearAllPlaybackHistory(_ sender: Any? = nil) {
+        stateStore.clearPlaybackHistory()
+        playlist.removeAll()
+        currentIndex = nil
+        tableView.reloadData()
+        updateEmptyState()
+        showHUD("Playback history cleared")
     }
 
     @objc func chooseLibraryFolder(_ sender: Any? = nil) {
@@ -1128,10 +1195,29 @@ final class PlayerViewController: NSViewController {
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { return [] }
 
-            return enumerator.compactMap { item in
-                guard let fileURL = item as? URL else { return nil }
-                return isSupportedMedia(fileURL) ? fileURL : nil
-            }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            var mediaURLs: [URL] = []
+            var enumeratedItemCount = 0
+            var wasLimited = false
+
+            while let item = enumerator.nextObject() {
+                enumeratedItemCount += 1
+                if enumeratedItemCount > maximumEnumeratedFolderItems || mediaURLs.count >= maximumScannedMediaFiles {
+                    wasLimited = true
+                    break
+                }
+                guard let fileURL = item as? URL else { continue }
+                if isSupportedMedia(fileURL) {
+                    mediaURLs.append(fileURL)
+                }
+            }
+
+            if wasLimited {
+                showHUD("Folder scan limited to \(mediaURLs.count) media files")
+            }
+
+            return mediaURLs.sorted {
+                $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+            }
         }
 
         return isSupportedMedia(url) ? [url] : []

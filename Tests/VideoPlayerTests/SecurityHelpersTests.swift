@@ -11,10 +11,24 @@ final class SecurityHelpersTests: XCTestCase {
 
     func testNetworkStreamValidatorRestrictsSchemes() {
         XCTAssertEqual(NetworkStreamValidator.validatedURL(from: " https://example.com/live.m3u8 ")?.scheme, "https")
-        XCTAssertEqual(NetworkStreamValidator.validatedURL(from: "rtsp://camera.local/stream")?.scheme, "rtsp")
+        XCTAssertEqual(NetworkStreamValidator.validatedURL(from: "rtsp://stream.example.com/live")?.scheme, "rtsp")
         XCTAssertNil(NetworkStreamValidator.validatedURL(from: "file:///etc/passwd"))
         XCTAssertNil(NetworkStreamValidator.validatedURL(from: "javascript:alert(1)"))
         XCTAssertNil(NetworkStreamValidator.validatedURL(from: "https://"))
+    }
+
+    func testNetworkStreamValidatorBlocksPrivateAndLocalTargetsByDefault() {
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "http://127.0.0.1/live.m3u8"))
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "http://localhost/live.m3u8"))
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "http://169.254.169.254/latest/meta-data"))
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "rtsp://192.168.1.10/stream"))
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "http://[::1]/stream"))
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "rtsp://camera.local/stream"))
+
+        XCTAssertNotNil(NetworkStreamValidator.validatedURL(
+            from: "rtsp://192.168.1.10/stream",
+            allowPrivateNetworkHosts: true
+        ))
     }
 
     func testSafeDownloadFileNameRemovesPathTraversal() {
@@ -92,6 +106,24 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertEqual(defaults.dictionary(forKey: "positions") as? [String: Double], ["https://example.com/movie.m3u8": 42.0])
     }
 
+    func testPlaybackStateStoreCanDisableHistoryPersistence() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = PlaybackStateStore(defaults: defaults)
+        store.setSavePlaybackHistoryEnabled(false)
+
+        let item = MediaItem(url: try XCTUnwrap(URL(string: "file:///Users/example/Private Movie.mkv")))
+        store.savePlaylist([item], currentIndex: 0)
+        store.addRecentMedia(item)
+        store.savePosition(120, for: item)
+
+        XCTAssertTrue(store.loadPlaylist().0.isEmpty)
+        XCTAssertTrue(store.loadRecentMedia().isEmpty)
+        XCTAssertEqual(store.position(for: item), 0)
+    }
+
     func testMPVLookupUsesTrustedPathsByDefault() {
         let defaultCandidates = MPVBridge.candidateExecutablePaths(environment: ["PATH": "/tmp/malicious"])
         XCTAssertEqual(defaultCandidates.first, "/opt/homebrew/bin/mpv")
@@ -102,6 +134,22 @@ final class SecurityHelpersTests: XCTestCase {
             "VIDEOPLAYER_ALLOW_PATH_MPV": "1"
         ])
         XCTAssertTrue(optInCandidates.contains("/tmp/tools/mpv"))
+    }
+
+    func testTeamIdentifierParsing() {
+        let diagnostic = """
+        Executable=/Applications/Video Player.app/Contents/MacOS/VideoPlayer
+        Identifier=com.jaysonguglietta.videoplayer
+        TeamIdentifier=ABCDE12345
+        """
+
+        XCTAssertEqual(CodeSignatureVerifier.teamIdentifier(from: diagnostic), "ABCDE12345")
+        XCTAssertNil(CodeSignatureVerifier.teamIdentifier(from: "TeamIdentifier=not set"))
+    }
+
+    func testExternalEngineVerificationTargetUsesContainingApp() {
+        let url = URL(fileURLWithPath: "/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib")
+        XCTAssertEqual(ExternalMediaEngineTrust.verificationTarget(for: url).path, "/Applications/VLC.app")
     }
 
 }

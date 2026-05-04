@@ -31,7 +31,7 @@ enum OpenSourceNotices {
 
         Optional External VideoLAN VLC / libVLC Integration
         - Video Player does not bundle VLC, libVLC, or VLC plugins in its commercial distribution.
-        - If the user already has VLC installed separately, Video Player can dynamically load that user-installed copy for broad codec playback, metadata parsing, subtitles, audio/video controls, snapshots, and related playback features.
+        - If the user already has VLC installed separately, Video Player can dynamically load that user-installed copy for broad codec playback, metadata parsing, subtitles, audio/video controls, snapshots, and related playback features only when external engines are enabled and the configured Team ID trust policy accepts it.
         - VLC media player is released under GPLv2 or later.
         - libVLC, the embeddable VLC engine, is released under LGPLv2.1 or later.
         - Some VLC plugins/modules/dependencies may carry additional or stronger license obligations depending on the user's installed VLC build.
@@ -42,6 +42,7 @@ enum OpenSourceNotices {
         Optional External mpv Integration
         - Optional external fallback player when installed separately by the user.
         - Video Player does not bundle mpv.
+        - Commercial builds require enabled and trusted external engines before mpv is used.
         - mpv is GPLv2 or later by default, and can be built LGPLv2.1 or later with GPL features disabled.
         - Project: https://mpv.io/
         - Source: https://github.com/mpv-player/mpv
@@ -57,6 +58,6 @@ enum OpenSourceNotices {
     }
 
     static var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4"
     }
 }

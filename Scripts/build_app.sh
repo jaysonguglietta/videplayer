@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
 BUNDLE_ID="${BUNDLE_ID:-com.jaysonguglietta.videoplayer}"
-APP_VERSION="${APP_VERSION:-0.1.3}"
-APP_BUILD="${APP_BUILD:-4}"
+APP_VERSION="${APP_VERSION:-0.1.4}"
+APP_BUILD="${APP_BUILD:-5}"
 BUILD_DIR="$ROOT_DIR/Build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -13,6 +13,10 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayer.entitlements"
+DEVELOPMENT_BUILD="${DEVELOPMENT_BUILD:-0}"
+REQUIRE_DEVELOPER_ID="${REQUIRE_DEVELOPER_ID:-}"
+EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-${APPLE_TEAM_ID:-}}"
+TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="${TRUSTED_EXTERNAL_ENGINE_TEAM_IDS:-}"
 
 cd "$ROOT_DIR"
 
@@ -22,6 +26,26 @@ fi
 
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT_DIR/.build/module-cache}"
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
+
+if [[ -z "$REQUIRE_DEVELOPER_ID" ]]; then
+    if [[ "$DEVELOPMENT_BUILD" == "1" ]]; then
+        REQUIRE_DEVELOPER_ID=0
+    else
+        REQUIRE_DEVELOPER_ID=1
+    fi
+fi
+
+if [[ "$DEVELOPMENT_BUILD" != "1" && "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
+    if [[ -z "$CODE_SIGN_IDENTITY" ]]; then
+        echo "CODE_SIGN_IDENTITY is required for direct-distribution builds." >&2
+        echo "Use DEVELOPMENT_BUILD=1 only for local ad-hoc testing." >&2
+        exit 1
+    fi
+    if [[ -z "$EXPECTED_DEVELOPER_TEAM_ID" ]]; then
+        echo "EXPECTED_DEVELOPER_TEAM_ID or APPLE_TEAM_ID is required so updates can verify Developer ID identity." >&2
+        exit 1
+    fi
+fi
 
 swift build -c release
 
@@ -58,6 +82,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>VPExpectedDeveloperTeamID</key>
+    <string>$EXPECTED_DEVELOPER_TEAM_ID</string>
+    <key>VPTrustedExternalEngineTeamIDs</key>
+    <string>$TRUSTED_EXTERNAL_ENGINE_TEAM_IDS</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -115,6 +143,10 @@ if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
     codesign --verify --deep --strict --verbose=2 "$APP_DIR"
     echo "Signed $APP_DIR with $CODE_SIGN_IDENTITY"
 else
+    if [[ "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
+        echo "Refusing to create an ad-hoc app when REQUIRE_DEVELOPER_ID=1." >&2
+        exit 1
+    fi
     codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
     echo "Built ad-hoc signed app. Set CODE_SIGN_IDENTITY for Developer ID signing."
 fi

@@ -8,9 +8,14 @@ STAGING_DIR="$BUILD_DIR/dmg"
 DMG_PATH="$BUILD_DIR/$APP_NAME.dmg"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
-REQUIRE_NOTARIZATION="${REQUIRE_NOTARIZATION:-0}"
+DEVELOPMENT_BUILD="${DEVELOPMENT_BUILD:-0}"
+REQUIRE_NOTARIZATION="${REQUIRE_NOTARIZATION:-1}"
 
-"$ROOT_DIR/Scripts/build_app.sh"
+if [[ "$DEVELOPMENT_BUILD" == "1" ]]; then
+    REQUIRE_DEVELOPER_ID=0 "$ROOT_DIR/Scripts/build_app.sh"
+else
+    REQUIRE_DEVELOPER_ID=1 "$ROOT_DIR/Scripts/build_app.sh"
+fi
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
@@ -30,6 +35,9 @@ if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
     codesign --force --timestamp --sign "$CODE_SIGN_IDENTITY" "$DMG_PATH"
     codesign --verify --verbose=2 "$DMG_PATH"
     echo "Signed $DMG_PATH with $CODE_SIGN_IDENTITY"
+elif [[ "$DEVELOPMENT_BUILD" != "1" ]]; then
+    echo "CODE_SIGN_IDENTITY is required to sign release DMGs." >&2
+    exit 1
 fi
 
 if [[ -n "$NOTARY_PROFILE" ]]; then
@@ -37,7 +45,7 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
     xcrun stapler staple "$DMG_PATH"
     xcrun stapler validate "$DMG_PATH"
     echo "Notarized and stapled $DMG_PATH"
-elif [[ "$REQUIRE_NOTARIZATION" == "1" ]]; then
+elif [[ "$REQUIRE_NOTARIZATION" == "1" && "$DEVELOPMENT_BUILD" != "1" ]]; then
     echo "REQUIRE_NOTARIZATION=1 but NOTARY_PROFILE is not set." >&2
     exit 1
 fi

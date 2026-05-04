@@ -22,7 +22,9 @@ find "Build/Video Player.app/Contents/Resources" -maxdepth 3 -type f
 ```sh
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
-REQUIRE_NOTARIZATION=1 ./Scripts/build_release_dmg.sh
+export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
+export UPDATE_SIGNING_PRIVATE_KEY="$HOME/.videoplayer-release/update-signing-private-key.pem"
+./Scripts/build_release_dmg.sh
 ```
 
 4. Publish updates only through the signed update manifest flow:
@@ -31,14 +33,24 @@ REQUIRE_NOTARIZATION=1 ./Scripts/build_release_dmg.sh
 ./Scripts/publish_release.sh
 ```
 
-5. Keep `.release/update-signing-private-key.pem` private and backed up.
-6. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
-7. Mention VLC/mpv only as optional user-installed integrations.
-8. Review codec patent/licensing obligations for the formats you market.
+5. Keep `$HOME/.videoplayer-release/update-signing-private-key.pem` private, outside synced project folders, and backed up in a secure secret store.
+6. Set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust.
+7. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
+8. Mention VLC/mpv only as optional user-installed integrations.
+9. Review codec patent/licensing obligations for the formats you market.
 
 ## Optional User-Installed Engines
 
-The app may dynamically use VLC/libVLC or mpv only when users have installed those tools separately. Those projects retain their own upstream license terms and trademarks. Do not ship their binaries, plugins, installers, icons, or source-derived assets in a paid DMG unless you are prepared to meet all upstream redistribution obligations.
+The app may dynamically use VLC/libVLC or mpv only when users have installed those tools separately, users enable external engines, and the configured Team ID trust policy accepts the engine. Those projects retain their own upstream license terms and trademarks. Do not ship their binaries, plugins, installers, icons, or source-derived assets in a paid DMG unless you are prepared to meet all upstream redistribution obligations.
+
+## Direct-Distribution Security Defaults
+
+- Release builds require Developer ID signing by default.
+- DMG builds require notarization by default.
+- The updater verifies the signed manifest, SHA-256 checksum, Developer ID Team ID, and Gatekeeper assessment before opening an update.
+- Private/local network streams are blocked by default.
+- Playback history can be disabled, cleared immediately, or cleared on quit.
+- Recursive folder scans are capped to reduce accidental denial of service.
 
 ## If You Later Bundle Third-Party Engines
 

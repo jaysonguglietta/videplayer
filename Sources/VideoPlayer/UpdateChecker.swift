@@ -177,6 +177,12 @@ final class UpdateChecker {
                 try UpdateSecurity.validateChecksum(forFileAt: temporaryURL, expectedSHA256: manifest.sha256)
                 let destination = try self?.moveDownloadedFile(from: temporaryURL, fileName: manifest.assetName)
                 guard let destination else { return }
+                do {
+                    try UpdatePackageVerifier.verifyDownloadedDiskImage(at: destination)
+                } catch {
+                    try? FileManager.default.removeItem(at: destination)
+                    throw error
+                }
                 self?.showDownloadedUpdate(destination, release: release, presentingWindow: presentingWindow)
             } catch {
                 self?.showError("Download verification failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
@@ -215,6 +221,8 @@ final class UpdateChecker {
             \(release.tagName) was verified and downloaded to:
 
             \(destination.path)
+
+            The disk image signature, Developer ID Team ID, notarization, manifest signature, and SHA-256 checksum were verified.
             """
             alert.addButton(withTitle: "Open")
             alert.addButton(withTitle: "Reveal in Finder")

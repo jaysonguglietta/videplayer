@@ -6,6 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let chaptersMenu = NSMenu(title: "Chapters")
     private let audioOutputMenu = NSMenu(title: "Audio Output")
     private let updateChecker = UpdateChecker()
+    private var externalEnginesMenuItem: NSMenuItem?
+    private var privateStreamsMenuItem: NSMenuItem?
+    private var saveHistoryMenuItem: NSMenuItem?
+    private var clearHistoryOnQuitMenuItem: NSMenuItem?
 
     private var playerViewController: PlayerViewController? {
         playerWindowController?.playerViewController
@@ -169,6 +173,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playerWindowController?.window?.toggleFullScreen(sender)
     }
 
+    @objc private func toggleExternalMediaEngines(_ sender: Any?) {
+        playerViewController?.toggleExternalMediaEngines(sender)
+        updateSecurityMenuStates()
+    }
+
+    @objc private func togglePrivateNetworkStreams(_ sender: Any?) {
+        playerViewController?.togglePrivateNetworkStreams(sender)
+        updateSecurityMenuStates()
+    }
+
+    @objc private func toggleSavePlaybackHistory(_ sender: Any?) {
+        playerViewController?.toggleSavePlaybackHistory(sender)
+        updateSecurityMenuStates()
+    }
+
+    @objc private func toggleClearHistoryOnQuit(_ sender: Any?) {
+        playerViewController?.toggleClearHistoryOnQuit(sender)
+        updateSecurityMenuStates()
+    }
+
+    @objc private func clearAllPlaybackHistory(_ sender: Any?) {
+        playerViewController?.clearAllPlaybackHistory(sender)
+    }
+
     @objc private func showAbout(_ sender: Any?) {
         showTextDialog(title: "About Video Player", text: OpenSourceNotices.aboutText, height: 220)
     }
@@ -193,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if menu === audioOutputMenu {
             rebuildAudioOutputMenu()
         }
+        updateSecurityMenuStates()
     }
 
     private func buildMainMenu() {
@@ -284,6 +313,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playbackMenu.addItem(NSMenuItem(title: "Audio Delay -0.1s", action: #selector(decreaseAudioDelay(_:)), keyEquivalent: "{"))
         playbackMenu.addItem(NSMenuItem(title: "Audio Delay +0.1s", action: #selector(increaseAudioDelay(_:)), keyEquivalent: "}"))
         playbackMenu.addItem(NSMenuItem(title: "Reset Audio Delay", action: #selector(resetAudioDelay(_:)), keyEquivalent: "\\"))
+        playbackMenu.addItem(.separator())
+        let externalEnginesItem = NSMenuItem(title: "Enable External VLC/mpv Engines", action: #selector(toggleExternalMediaEngines(_:)), keyEquivalent: "")
+        externalEnginesItem.target = self
+        playbackMenu.addItem(externalEnginesItem)
+        self.externalEnginesMenuItem = externalEnginesItem
         playbackMenu.items.forEach { $0.target = self }
         playbackMenuItem.submenu = playbackMenu
         mainMenu.addItem(playbackMenuItem)
@@ -324,6 +358,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
+        let privacyMenuItem = NSMenuItem()
+        let privacyMenu = NSMenu(title: "Privacy")
+        let saveHistoryItem = NSMenuItem(title: "Save Playback History", action: #selector(toggleSavePlaybackHistory(_:)), keyEquivalent: "")
+        saveHistoryItem.target = self
+        privacyMenu.addItem(saveHistoryItem)
+        self.saveHistoryMenuItem = saveHistoryItem
+        let clearOnQuitItem = NSMenuItem(title: "Clear History on Quit", action: #selector(toggleClearHistoryOnQuit(_:)), keyEquivalent: "")
+        clearOnQuitItem.target = self
+        privacyMenu.addItem(clearOnQuitItem)
+        self.clearHistoryOnQuitMenuItem = clearOnQuitItem
+        privacyMenu.addItem(.separator())
+        let clearHistoryItem = NSMenuItem(title: "Clear All Playback History", action: #selector(clearAllPlaybackHistory(_:)), keyEquivalent: "")
+        clearHistoryItem.target = self
+        privacyMenu.addItem(clearHistoryItem)
+        privacyMenu.addItem(.separator())
+        let privateStreamsItem = NSMenuItem(title: "Allow Private Network Streams", action: #selector(togglePrivateNetworkStreams(_:)), keyEquivalent: "")
+        privateStreamsItem.target = self
+        privacyMenu.addItem(privateStreamsItem)
+        self.privateStreamsMenuItem = privateStreamsItem
+        privacyMenuItem.submenu = privacyMenu
+        mainMenu.addItem(privacyMenuItem)
+
         let helpMenuItem = NSMenuItem()
         let helpMenu = NSMenu(title: "Help")
         let helpUpdateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
@@ -341,6 +397,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApplication.shared.helpMenu = helpMenu
 
         NSApplication.shared.mainMenu = mainMenu
+        updateSecurityMenuStates()
+    }
+
+    private func updateSecurityMenuStates() {
+        externalEnginesMenuItem?.state = playerViewController?.externalMediaEnginesEnabled() == true ? .on : .off
+        privateStreamsMenuItem?.state = playerViewController?.privateNetworkStreamsEnabled() == true ? .on : .off
+        saveHistoryMenuItem?.state = playerViewController?.savePlaybackHistoryEnabled() == true ? .on : .off
+        clearHistoryOnQuitMenuItem?.state = playerViewController?.clearHistoryOnQuitEnabled() == true ? .on : .off
     }
 
     private func rebuildOpenRecentMenu() {
