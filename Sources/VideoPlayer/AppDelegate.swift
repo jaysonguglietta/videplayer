@@ -402,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateSecurityMenuStates() {
         externalEnginesMenuItem?.state = playerViewController?.externalMediaEnginesEnabled() == true ? .on : .off
+        externalEnginesMenuItem?.isEnabled = playerViewController?.externalMediaEnginesAvailable() == true
         privateStreamsMenuItem?.state = playerViewController?.privateNetworkStreamsEnabled() == true ? .on : .off
         saveHistoryMenuItem?.state = playerViewController?.savePlaybackHistoryEnabled() == true ? .on : .off
         clearHistoryOnQuitMenuItem?.state = playerViewController?.clearHistoryOnQuitEnabled() == true ? .on : .off

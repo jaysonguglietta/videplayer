@@ -6,7 +6,8 @@ enum NetworkStreamValidator {
 
     static func validatedURL(
         from value: String,
-        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams()
+        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        resolvedAddressesForHost: (String) -> [String] = SystemNetworkAddressResolver.resolvedAddresses
     ) -> URL? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -14,10 +15,15 @@ enum NetworkStreamValidator {
             let scheme = url.scheme?.lowercased(),
             allowedSchemes.contains(scheme),
             let host = url.host,
-            !host.isEmpty,
-            allowPrivateNetworkHosts || !isPrivateOrLocalHost(host)
+            !host.isEmpty
         else {
             return nil
+        }
+
+        if !allowPrivateNetworkHosts {
+            guard !isPrivateOrLocalHost(host) else { return nil }
+            let resolvedAddresses = resolvedAddressesForHost(host)
+            guard !resolvedAddresses.contains(where: isPrivateOrLocalHost) else { return nil }
         }
 
         return url
@@ -43,6 +49,45 @@ enum NetworkStreamValidator {
             return ipv6.isPrivateOrLocal
         }
         return false
+    }
+}
+
+enum SystemNetworkAddressResolver {
+    static func resolvedAddresses(for host: String) -> [String] {
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var resultPointer: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(host, nil, &hints, &resultPointer)
+        guard status == 0, let firstResult = resultPointer else { return [] }
+        defer { freeaddrinfo(firstResult) }
+
+        var addresses: [String] = []
+        var current: UnsafeMutablePointer<addrinfo>? = firstResult
+        while let addressInfo = current {
+            var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let nameStatus = getnameinfo(
+                addressInfo.pointee.ai_addr,
+                addressInfo.pointee.ai_addrlen,
+                &hostBuffer,
+                socklen_t(hostBuffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            if nameStatus == 0 {
+                addresses.append(String(cString: hostBuffer))
+            }
+            current = addressInfo.pointee.ai_next
+        }
+        return addresses
     }
 }
 

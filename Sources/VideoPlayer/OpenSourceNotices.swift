@@ -30,8 +30,8 @@ enum OpenSourceNotices {
         - Repository: \(repositoryURL.absoluteString)
 
         Optional External VideoLAN VLC / libVLC Integration
-        - Video Player does not bundle VLC, libVLC, or VLC plugins in its commercial distribution.
-        - If the user already has VLC installed separately, Video Player can dynamically load that user-installed copy for broad codec playback, metadata parsing, subtitles, audio/video controls, snapshots, and related playback features only when external engines are enabled and the configured Team ID trust policy accepts it.
+        - The default commercial build is sandboxed, native-only, and does not bundle or load VLC, libVLC, or VLC plugins.
+        - An advanced external-engine build can dynamically load a user-installed VLC copy for broad codec playback, metadata parsing, subtitles, audio/video controls, snapshots, and related playback features only when external engines are enabled and strict code-signature, Team ID, and Gatekeeper checks accept it.
         - VLC media player is released under GPLv2 or later.
         - libVLC, the embeddable VLC engine, is released under LGPLv2.1 or later.
         - Some VLC plugins/modules/dependencies may carry additional or stronger license obligations depending on the user's installed VLC build.
@@ -42,7 +42,7 @@ enum OpenSourceNotices {
         Optional External mpv Integration
         - Optional external fallback player when installed separately by the user.
         - Video Player does not bundle mpv.
-        - Commercial builds require enabled and trusted external engines before mpv is used.
+        - Advanced external-engine builds require enabled and trusted external engines before mpv is used.
         - mpv is GPLv2 or later by default, and can be built LGPLv2.1 or later with GPL features disabled.
         - Project: https://mpv.io/
         - Source: https://github.com/mpv-player/mpv
@@ -51,13 +51,13 @@ enum OpenSourceNotices {
         - AppKit, AVKit, AVFoundation, Foundation, and related macOS SDK frameworks are used for the native app shell and Apple-native playback.
         - These are Apple platform frameworks, not bundled open source dependencies of this repository.
 
-        No third-party Swift packages or third-party media engines are currently bundled in the distributed app.
+        No third-party Swift packages or third-party media engines are currently bundled in the distributed app. The default commercial build keeps external engines unavailable.
 
         This notice is informational and not legal advice. Review the upstream license files before bundling or redistributing any third-party media engine.
         """
     }
 
     static var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.5"
     }
 }

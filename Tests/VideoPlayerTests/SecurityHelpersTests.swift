@@ -31,6 +31,29 @@ final class SecurityHelpersTests: XCTestCase {
         ))
     }
 
+    func testNetworkStreamValidatorBlocksDNSResolvedPrivateTargets() {
+        let resolver: (String) -> [String] = { host in
+            host == "public.example.com" ? ["127.0.0.1"] : []
+        }
+
+        XCTAssertNil(NetworkStreamValidator.validatedURL(
+            from: "https://public.example.com/live.m3u8",
+            resolvedAddressesForHost: resolver
+        ))
+        XCTAssertNotNil(NetworkStreamValidator.validatedURL(
+            from: "https://public.example.com/live.m3u8",
+            allowPrivateNetworkHosts: true,
+            resolvedAddressesForHost: resolver
+        ))
+    }
+
+    func testNetworkStreamValidatorAllowsDNSResolvedPublicTargets() {
+        XCTAssertNotNil(NetworkStreamValidator.validatedURL(
+            from: "https://media.example.com/live.m3u8",
+            resolvedAddressesForHost: { _ in ["93.184.216.34"] }
+        ))
+    }
+
     func testSafeDownloadFileNameRemovesPathTraversal() {
         XCTAssertEqual(UpdateSecurity.safeDownloadFileName("../Video Player.dmg"), "Video Player.dmg")
         XCTAssertEqual(UpdateSecurity.safeDownloadFileName("bad/name?.zip"), "name-.zip.dmg")
@@ -117,11 +140,44 @@ final class SecurityHelpersTests: XCTestCase {
         let item = MediaItem(url: try XCTUnwrap(URL(string: "file:///Users/example/Private Movie.mkv")))
         store.savePlaylist([item], currentIndex: 0)
         store.addRecentMedia(item)
+        store.addLibraryFolder(URL(fileURLWithPath: "/Users/example/Private Folder", isDirectory: true))
         store.savePosition(120, for: item)
 
         XCTAssertTrue(store.loadPlaylist().0.isEmpty)
         XCTAssertTrue(store.loadRecentMedia().isEmpty)
+        XCTAssertTrue(store.loadLibraryFolders().isEmpty)
         XCTAssertEqual(store.position(for: item), 0)
+    }
+
+    func testTrustedEngineTeamIDsIgnoreEnvironmentWhenDevelopmentOverridesDisabled() {
+        let teamIDs = AppSecurityPolicy.trustedExternalEngineTeamIDs(
+            from: "TEAMFROMPLIST",
+            environment: ["VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS": "TEAMFROMENV"],
+            includeDevelopmentOverrides: false
+        )
+
+        XCTAssertEqual(teamIDs, Set(["TEAMFROMPLIST"]))
+    }
+
+    func testTrustedEngineTeamIDsIncludeEnvironmentOnlyForDevelopmentOverrides() {
+        let teamIDs = AppSecurityPolicy.trustedExternalEngineTeamIDs(
+            from: ["TEAMFROMPLIST"],
+            environment: ["VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS": "TEAMFROMENV"],
+            includeDevelopmentOverrides: true
+        )
+
+        XCTAssertEqual(teamIDs, Set(["TEAMFROMPLIST", "TEAMFROMENV"]))
+    }
+
+    func testExternalEnginesUnavailableByDefault() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        PrivacySettings.setExternalMediaEnginesEnabled(true, defaults: defaults)
+
+        XCTAssertFalse(AppSecurityPolicy.externalMediaEnginesAvailable)
+        XCTAssertFalse(PrivacySettings.externalMediaEnginesEnabled(defaults: defaults))
     }
 
     func testMPVLookupUsesTrustedPathsByDefault() {

@@ -4,8 +4,9 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 
 ## Highlights
 
-- Optional user-installed VLC/libVLC support for MKV, AVI, WebM, FLV, FLAC, OGG, OPUS, and more.
-- External VLC/mpv engines are opt-in and must be signed by configured trusted Team IDs.
+- Default commercial builds are sandboxed, native-only, and avoid loading third-party media engines.
+- Optional advanced builds can enable user-installed VLC/libVLC or mpv support for MKV, AVI, WebM, FLV, FLAC, OGG, OPUS, and more.
+- External VLC/mpv engines are opt-in and must pass strict code-signature, configured Team ID, and Gatekeeper checks.
 - 10-second rewind and fast-forward controls.
 - 200% volume boost with slider and mouse-wheel control over the player area.
 - Embedded audio/subtitle track selectors when using a user-installed VLC/libVLC engine.
@@ -22,7 +23,7 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - Mini player, floating picture-in-picture-style window, theater mode, hideable sidebar, and full screen.
 - Playback resume per file or stream.
 - Playlist, selected item, volume, and speed persistence.
-- Network stream opening for public HTTP, HTTPS, RTSP, and HLS-style URLs; private/local targets are blocked by default.
+- Network stream opening for public HTTP, HTTPS, RTSP, and HLS-style URLs; private/local targets and DNS names resolving to private/local addresses are blocked by default.
 - Privacy controls for disabling saved playback history, clearing history on quit, and clearing all history.
 - On-screen HUD for seek, volume, speed, subtitle, and resume feedback.
 
@@ -35,9 +36,9 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 
 ## Format support
 
-The sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF.
+The default sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. This default build is sandboxed and does not load third-party media engines.
 
-For broad codec coverage and 200% volume boost, the app can use a copy of VLC/libVLC that the user installed separately. This is disabled by default for commercial builds; users must enable external engines, and the engine must match a trusted Team ID configured at build time. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
+For broad codec coverage, an advanced build can use a copy of VLC/libVLC that the user installed separately. This build mode is disabled by default; it must be created with `ENABLE_EXTERNAL_ENGINES=1`, users must enable external engines, and the engine must pass strict code-signature, Team ID, and Gatekeeper checks. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
 
 If VLC is not installed, `mpv` can also be used as a fallback external playback engine:
 
@@ -45,7 +46,7 @@ If VLC is not installed, `mpv` can also be used as a fallback external playback 
 brew install mpv
 ```
 
-When `mpv` is installed separately by the user at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`, the app can use it for advanced formats if VLC is unavailable and trusted external engines are enabled. `PATH` lookup is disabled by default; set `VIDEOPLAYER_ALLOW_PATH_MPV=1` and `VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES=1` only for trusted development shells.
+When `mpv` is installed separately by the user at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv`, an advanced external-engine build can use it for advanced formats if VLC is unavailable and trusted external engines are enabled. `PATH` lookup and unverified-engine loading are compiled as debug-only development overrides and are not honored by release builds.
 
 ## Documentation
 
@@ -77,6 +78,8 @@ export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 ```
 
 The release DMG is created at `Build/Video Player.dmg`.
+
+To build the advanced external-engine variant instead of the sandboxed native-only default, also set `ENABLE_EXTERNAL_ENGINES=1` and `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` to the exact Team IDs you intend to trust.
 
 ## Updates and Licenses
 

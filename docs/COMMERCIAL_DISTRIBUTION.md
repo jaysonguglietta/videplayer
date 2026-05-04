@@ -5,6 +5,7 @@ This project is configured for direct commercial distribution as an app bundle t
 - Video Player application code under this repository's MIT License.
 - Apple system frameworks provided by macOS.
 - No bundled VLC/libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines.
+- A sandboxed native-only default build.
 
 This document is practical engineering guidance, not legal advice. Have counsel review the exact release package, store terms, trademarks, privacy policy, and patent exposure before broad commercial sale.
 
@@ -34,22 +35,25 @@ export UPDATE_SIGNING_PRIVATE_KEY="$HOME/.videoplayer-release/update-signing-pri
 ```
 
 5. Keep `$HOME/.videoplayer-release/update-signing-private-key.pem` private, outside synced project folders, and backed up in a secure secret store.
-6. Set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust.
-7. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
-8. Mention VLC/mpv only as optional user-installed integrations.
-9. Review codec patent/licensing obligations for the formats you market.
+6. Keep `ENABLE_EXTERNAL_ENGINES` unset for the default sandboxed commercial DMG.
+7. If you intentionally ship an advanced external-engine build, set `ENABLE_EXTERNAL_ENGINES=1` and set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust.
+8. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
+9. Mention VLC/mpv only as optional user-installed integrations.
+10. Review codec patent/licensing obligations for the formats you market.
 
 ## Optional User-Installed Engines
 
-The app may dynamically use VLC/libVLC or mpv only when users have installed those tools separately, users enable external engines, and the configured Team ID trust policy accepts the engine. Those projects retain their own upstream license terms and trademarks. Do not ship their binaries, plugins, installers, icons, or source-derived assets in a paid DMG unless you are prepared to meet all upstream redistribution obligations.
+The default commercial build does not load VLC/libVLC or mpv. An advanced build may dynamically use VLC/libVLC or mpv only when users have installed those tools separately, users enable external engines, and strict code-signature, Gatekeeper, and configured Team ID checks accept the engine. Those projects retain their own upstream license terms and trademarks. Do not ship their binaries, plugins, installers, icons, or source-derived assets in a paid DMG unless you are prepared to meet all upstream redistribution obligations.
 
 ## Direct-Distribution Security Defaults
 
 - Release builds require Developer ID signing by default.
 - DMG builds require notarization by default.
+- Default builds use App Sandbox and do not disable library validation.
+- Runtime environment variables cannot widen external-engine trust in release builds.
 - The updater verifies the signed manifest, SHA-256 checksum, Developer ID Team ID, and Gatekeeper assessment before opening an update.
-- Private/local network streams are blocked by default.
-- Playback history can be disabled, cleared immediately, or cleared on quit.
+- Private/local network streams, including DNS names resolving to private/local addresses, are blocked by default.
+- Playback history and saved library folders can be disabled, cleared immediately, or cleared on quit.
 - Recursive folder scans are capped to reduce accidental denial of service.
 
 ## If You Later Bundle Third-Party Engines

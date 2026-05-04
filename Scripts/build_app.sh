@@ -4,19 +4,27 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
 BUNDLE_ID="${BUNDLE_ID:-com.jaysonguglietta.videoplayer}"
-APP_VERSION="${APP_VERSION:-0.1.4}"
-APP_BUILD="${APP_BUILD:-5}"
+APP_VERSION="${APP_VERSION:-0.1.5}"
+APP_BUILD="${APP_BUILD:-6}"
 BUILD_DIR="$ROOT_DIR/Build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
-ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayer.entitlements"
+ENABLE_EXTERNAL_ENGINES="${ENABLE_EXTERNAL_ENGINES:-0}"
 DEVELOPMENT_BUILD="${DEVELOPMENT_BUILD:-0}"
 REQUIRE_DEVELOPER_ID="${REQUIRE_DEVELOPER_ID:-}"
 EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-${APPLE_TEAM_ID:-}}"
 TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="${TRUSTED_EXTERNAL_ENGINE_TEAM_IDS:-}"
+
+if [[ "$ENABLE_EXTERNAL_ENGINES" == "1" ]]; then
+    ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayerExternalEngines.entitlements"
+    EXTERNAL_MEDIA_ENGINES_PLIST_VALUE="true"
+else
+    ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayer.entitlements"
+    EXTERNAL_MEDIA_ENGINES_PLIST_VALUE="false"
+fi
 
 cd "$ROOT_DIR"
 
@@ -43,6 +51,10 @@ if [[ "$DEVELOPMENT_BUILD" != "1" && "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
     fi
     if [[ -z "$EXPECTED_DEVELOPER_TEAM_ID" ]]; then
         echo "EXPECTED_DEVELOPER_TEAM_ID or APPLE_TEAM_ID is required so updates can verify Developer ID identity." >&2
+        exit 1
+    fi
+    if [[ "$ENABLE_EXTERNAL_ENGINES" == "1" && -z "$TRUSTED_EXTERNAL_ENGINE_TEAM_IDS" ]]; then
+        echo "TRUSTED_EXTERNAL_ENGINE_TEAM_IDS is required when ENABLE_EXTERNAL_ENGINES=1." >&2
         exit 1
     fi
 fi
@@ -86,6 +98,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>$EXPECTED_DEVELOPER_TEAM_ID</string>
     <key>VPTrustedExternalEngineTeamIDs</key>
     <string>$TRUSTED_EXTERNAL_ENGINE_TEAM_IDS</string>
+    <key>VPExternalMediaEnginesAvailable</key>
+    <$EXTERNAL_MEDIA_ENGINES_PLIST_VALUE/>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -131,7 +145,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "No third-party media engines are bundled. Optional user-installed VLC/mpv can be used at runtime."
+if [[ "$ENABLE_EXTERNAL_ENGINES" == "1" ]]; then
+    echo "No third-party media engines are bundled. Optional user-installed VLC/mpv can be used when trusted."
+else
+    echo "No third-party media engines are bundled. Default build is sandboxed and native-only."
+fi
 
 if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
     codesign --force \
@@ -147,7 +165,7 @@ else
         echo "Refusing to create an ad-hoc app when REQUIRE_DEVELOPER_ID=1." >&2
         exit 1
     fi
-    codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
+    codesign --force --deep --entitlements "$ENTITLEMENTS_PATH" --sign - "$APP_DIR" >/dev/null 2>&1 || true
     echo "Built ad-hoc signed app. Set CODE_SIGN_IDENTITY for Developer ID signing."
 fi
 

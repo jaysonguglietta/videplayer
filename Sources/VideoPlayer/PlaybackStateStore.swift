@@ -94,6 +94,7 @@ final class PlaybackStateStore {
     }
 
     func addLibraryFolder(_ url: URL) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return }
         var values = defaults.stringArray(forKey: Key.libraryFolders) ?? []
         values.removeAll { $0 == url.absoluteString }
         values.insert(url.absoluteString, at: 0)
@@ -101,7 +102,10 @@ final class PlaybackStateStore {
     }
 
     func loadLibraryFolders() -> [URL] {
-        (defaults.stringArray(forKey: Key.libraryFolders) ?? []).compactMap { value in
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else {
+            return []
+        }
+        return (defaults.stringArray(forKey: Key.libraryFolders) ?? []).compactMap { value in
             guard let url = URL(string: value), url.isFileURL else { return nil }
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {

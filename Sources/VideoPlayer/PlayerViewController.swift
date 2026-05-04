@@ -218,7 +218,16 @@ final class PlayerViewController: NSViewController {
         stateStore.externalMediaEnginesEnabled()
     }
 
+    func externalMediaEnginesAvailable() -> Bool {
+        AppSecurityPolicy.externalMediaEnginesAvailable
+    }
+
     @objc func toggleExternalMediaEngines(_ sender: Any? = nil) {
+        guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            stateStore.setExternalMediaEnginesEnabled(false)
+            showHUD("External engines unavailable in this build")
+            return
+        }
         let enabled = !stateStore.externalMediaEnginesEnabled()
         stateStore.setExternalMediaEnginesEnabled(enabled)
         if !enabled, currentEngine == .vlc || currentEngine == .mpv {

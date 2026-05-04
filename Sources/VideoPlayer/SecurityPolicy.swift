@@ -4,12 +4,27 @@ enum AppSecurityPolicy {
     static var expectedDeveloperTeamID: String? {
         clean(
             Bundle.main.object(forInfoDictionaryKey: "VPExpectedDeveloperTeamID") as? String
-                ?? ProcessInfo.processInfo.environment["VIDEOPLAYER_EXPECTED_TEAM_ID"]
+                ?? developmentEnvironmentValue("VIDEOPLAYER_EXPECTED_TEAM_ID")
         )
     }
 
+    static var externalMediaEnginesAvailable: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "VPExternalMediaEnginesAvailable") as? Bool ?? false
+    }
+
     static var trustedExternalEngineTeamIDs: Set<String> {
-        let plistValue = Bundle.main.object(forInfoDictionaryKey: "VPTrustedExternalEngineTeamIDs")
+        trustedExternalEngineTeamIDs(
+            from: Bundle.main.object(forInfoDictionaryKey: "VPTrustedExternalEngineTeamIDs"),
+            environment: ProcessInfo.processInfo.environment,
+            includeDevelopmentOverrides: developmentEnvironmentOverridesEnabled
+        )
+    }
+
+    static func trustedExternalEngineTeamIDs(
+        from plistValue: Any?,
+        environment: [String: String],
+        includeDevelopmentOverrides: Bool
+    ) -> Set<String> {
         let rawValues: [String]
         if let array = plistValue as? [String] {
             rawValues = array
@@ -19,14 +34,35 @@ enum AppSecurityPolicy {
             rawValues = []
         }
 
-        let envValues = ProcessInfo.processInfo.environment["VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS"]?
-            .components(separatedBy: ",") ?? []
+        let envValues = includeDevelopmentOverrides
+            ? environment["VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS"]?.components(separatedBy: ",") ?? []
+            : []
 
         return Set((rawValues + envValues).compactMap(clean))
     }
 
     static var allowsUnverifiedExternalEnginesForDevelopment: Bool {
+        #if DEBUG
         ProcessInfo.processInfo.environment["VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES"] == "1"
+        #else
+        false
+        #endif
+    }
+
+    private static var developmentEnvironmentOverridesEnabled: Bool {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }
+
+    private static func developmentEnvironmentValue(_ key: String) -> String? {
+        #if DEBUG
+        ProcessInfo.processInfo.environment[key]
+        #else
+        nil
+        #endif
     }
 
     private static func clean(_ value: String?) -> String? {
@@ -70,16 +106,24 @@ enum PrivacySettings {
     }
 
     static func externalMediaEnginesEnabled(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: Key.externalMediaEnginesEnabled) as? Bool ?? false
+        guard AppSecurityPolicy.externalMediaEnginesAvailable else { return false }
+        return defaults.object(forKey: Key.externalMediaEnginesEnabled) as? Bool ?? false
     }
 
     static func setExternalMediaEnginesEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
+        guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            defaults.set(false, forKey: Key.externalMediaEnginesEnabled)
+            return
+        }
         defaults.set(enabled, forKey: Key.externalMediaEnginesEnabled)
     }
 }
 
 enum ExternalMediaEngineTrust {
     static func isEngineAllowed(at url: URL, defaults: UserDefaults = .standard) -> Bool {
+        guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            return false
+        }
         guard PrivacySettings.externalMediaEnginesEnabled(defaults: defaults) else {
             return false
         }
@@ -94,9 +138,11 @@ enum ExternalMediaEngineTrust {
         }
 
         do {
-            guard let teamID = try CodeSignatureVerifier.teamIdentifier(forCodeAt: verificationTarget(for: url)) else {
+            let target = verificationTarget(for: url)
+            guard let teamID = try CodeSignatureVerifier.teamIdentifier(forCodeAt: target) else {
                 return false
             }
+            try CodeSignatureVerifier.assessGatekeeperExecute(for: target)
             return trustedTeamIDs.contains(teamID)
         } catch {
             return false
@@ -116,11 +162,26 @@ enum ExternalMediaEngineTrust {
 
 enum CodeSignatureVerifier {
     static func teamIdentifier(forCodeAt url: URL) throws -> String? {
+        try verifyStrictCodeSignature(forCodeAt: url)
         let result = try run("/usr/bin/codesign", arguments: ["-dv", "--verbose=4", url.path])
         guard result.status == 0 else {
             throw CodeSignatureVerificationError.commandFailed(result.combinedOutput)
         }
         return teamIdentifier(from: result.combinedOutput)
+    }
+
+    static func verifyStrictCodeSignature(forCodeAt url: URL) throws {
+        let verifyArguments: [String]
+        if url.pathExtension.caseInsensitiveCompare("app") == .orderedSame {
+            verifyArguments = ["--verify", "--deep", "--strict", "--verbose=2", url.path]
+        } else {
+            verifyArguments = ["--verify", "--strict", "--verbose=2", url.path]
+        }
+
+        let result = try run("/usr/bin/codesign", arguments: verifyArguments)
+        guard result.status == 0 else {
+            throw CodeSignatureVerificationError.invalidCodeSignature(result.combinedOutput)
+        }
     }
 
     static func verifyTeamIdentifier(forCodeAt url: URL, expectedTeamID: String) throws {
@@ -137,6 +198,16 @@ enum CodeSignatureVerifier {
         let result = try run(
             "/usr/sbin/spctl",
             arguments: ["--assess", "--type", "open", "--context", "context:primary-signature", "-vv", url.path]
+        )
+        guard result.status == 0 else {
+            throw CodeSignatureVerificationError.gatekeeperAssessmentFailed(result.combinedOutput)
+        }
+    }
+
+    static func assessGatekeeperExecute(for url: URL) throws {
+        let result = try run(
+            "/usr/sbin/spctl",
+            arguments: ["--assess", "--type", "execute", "-vv", url.path]
         )
         guard result.status == 0 else {
             throw CodeSignatureVerificationError.gatekeeperAssessmentFailed(result.combinedOutput)
@@ -187,6 +258,7 @@ struct CommandResult {
 
 enum CodeSignatureVerificationError: LocalizedError, Equatable {
     case commandFailed(String)
+    case invalidCodeSignature(String)
     case teamIdentifierMismatch(expected: String, actual: String)
     case gatekeeperAssessmentFailed(String)
     case expectedTeamIDMissing
@@ -195,6 +267,8 @@ enum CodeSignatureVerificationError: LocalizedError, Equatable {
         switch self {
         case .commandFailed(let detail):
             "Code signature verification failed: \(detail)"
+        case .invalidCodeSignature(let detail):
+            "Code signature validation failed: \(detail)"
         case .teamIdentifierMismatch(let expected, let actual):
             "The downloaded update was signed by team \(actual), but this app only trusts team \(expected)."
         case .gatekeeperAssessmentFailed(let detail):

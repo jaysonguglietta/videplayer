@@ -2,9 +2,9 @@
 
 ## Opening Media
 
-Use File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work when the user has VLC or mpv installed separately.
+Use File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work only in an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
 
-Use File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets are blocked by default. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
+Use File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
 
 Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and extra metadata from a user-installed VLC copy when available. Press Space, K, the play button, or double-click the playlist row to start.
 
@@ -31,7 +31,7 @@ Keyboard shortcuts:
 
 Use View > Toggle Sidebar to show or hide the playlist and inspector. Use View > Mini Player for a small floating player, View > Picture in Picture for a floating playback window, View > Theater Mode for a clean playback-focused view, or the full-screen button for macOS full screen.
 
-Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines. Commercial builds only use external engines when their code signature Team ID is trusted by the app build.
+Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines when the app was built as an advanced external-engine variant. Default commercial builds keep this option unavailable. Advanced builds only use external engines when strict code-signature, Team ID, and Gatekeeper checks trust the engine.
 
 Use View > Video Adjustments to change brightness, contrast, saturation, hue, and gamma for video backed by a trusted user-installed VLC copy. Use View > Reset Video Adjustments to return to the original picture.
 
@@ -78,9 +78,9 @@ Use Playback > Take Screenshot to save the current frame. Screenshots are writte
 
 ## Resume and Persistence
 
-The app remembers playback position per file or stream when Privacy > Save Playback History is enabled. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, volume, and playback speed when the app opens. Network stream credentials, query strings, and fragments are redacted before they are saved.
+The app remembers playback position per file or stream when Privacy > Save Playback History is enabled. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, saved library folders, volume, and playback speed when the app opens. Network stream credentials, query strings, and fragments are redacted before they are saved.
 
-Use Privacy > Save Playback History to turn history saving on or off. Use Privacy > Clear History on Quit to clear playback history when the app closes. Use Privacy > Clear All Playback History to remove playlist, recent media, resume positions, and saved library folders immediately.
+Use Privacy > Save Playback History to turn history saving on or off. When it is off, playlists, recent media, resume positions, and saved library folders are not persisted. Use Privacy > Clear History on Quit to clear playback history when the app closes. Use Privacy > Clear All Playback History to remove playlist, recent media, resume positions, and saved library folders immediately.
 
 ## On-Screen HUD
 
@@ -92,4 +92,4 @@ Use Video Player > Check for Updates or Help > Check for Updates to check the Gi
 
 Use Video Player > About Video Player for app details. Use Video Player > Open Source Licenses or Help > Open Source Licenses to view notices for Video Player and optional external VLC/mpv integrations.
 
-Video Player's own app source code is MIT licensed. The distributed app does not bundle VLC/libVLC, mpv, FFmpeg, or other third-party media engines. Optional user-installed integrations keep their own upstream license terms.
+Video Player's own app source code is MIT licensed. The default distributed app is sandboxed and does not bundle or load VLC/libVLC, mpv, FFmpeg, or other third-party media engines. Optional advanced user-installed integrations keep their own upstream license terms.
