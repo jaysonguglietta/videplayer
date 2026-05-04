@@ -138,15 +138,24 @@ final class PlayerViewController: NSViewController {
         alert.accessoryView = input
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard let url = NetworkStreamValidator.validatedURL(
-            from: input.stringValue,
-            allowPrivateNetworkHosts: stateStore.privateNetworkStreamsEnabled()
-        ) else {
-            showHUD("Use public HTTP, HTTPS, RTSP, or HLS")
-            return
-        }
+        let streamValue = input.stringValue
+        let allowPrivateNetworkHosts = stateStore.privateNetworkStreamsEnabled()
+        showHUD("Checking stream")
+        Task { [weak self] in
+            let url = await NetworkStreamValidator.validatedURLResolvingHost(
+                from: streamValue,
+                allowPrivateNetworkHosts: allowPrivateNetworkHosts
+            )
 
-        addMediaItems([MediaItem(url: url)], replacePlaylist: playlist.isEmpty, autoplay: false)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard let url else {
+                    self.showHUD("Use public HTTP, HTTPS, RTSP, or HLS")
+                    return
+                }
+                self.addMediaItems([MediaItem(url: url)], replacePlaylist: self.playlist.isEmpty, autoplay: false)
+            }
+        }
     }
 
     @objc func openSubtitlePanel(_ sender: Any? = nil) {

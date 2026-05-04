@@ -4,11 +4,11 @@
 
 Use File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work only in an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
 
-Use File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
+Use File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. The app checks public stream hosts before adding them to the playlist. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
 
 Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and extra metadata from a user-installed VLC copy when available. Press Space, K, the play button, or double-click the playlist row to start.
 
-Use File > Open Recent to reload a recently played file or stream. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
+Use File > Open Recent to reload a recently played file or stream when playback history is enabled. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
 
 ## Playback
 
@@ -78,7 +78,7 @@ Use Playback > Take Screenshot to save the current frame. Screenshots are writte
 
 ## Resume and Persistence
 
-The app remembers playback position per file or stream when Privacy > Save Playback History is enabled. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, saved library folders, volume, and playback speed when the app opens. Network stream credentials, query strings, and fragments are redacted before they are saved.
+Privacy > Save Playback History is off by default. When you enable it, the app remembers playback position per file or stream. When reopening media with a saved position, it offers to resume or start over. It also restores the previous playlist, selected item, saved library folders, volume, and playback speed when the app opens. Network stream credentials, query strings, and fragments are redacted before they are saved.
 
 Use Privacy > Save Playback History to turn history saving on or off. When it is off, playlists, recent media, resume positions, and saved library folders are not persisted. Use Privacy > Clear History on Quit to clear playback history when the app closes. Use Privacy > Clear All Playback History to remove playlist, recent media, resume positions, and saved library folders immediately.
 

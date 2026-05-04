@@ -25,12 +25,16 @@ export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 export UPDATE_SIGNING_PRIVATE_KEY="$HOME/.videoplayer-release/update-signing-private-key.pem"
+chmod 700 "$HOME/.videoplayer-release"
+chmod 600 "$UPDATE_SIGNING_PRIVATE_KEY"
 ./Scripts/build_release_dmg.sh
 ```
 
-4. Publish updates only through the signed update manifest flow:
+4. Publish updates only through the signed update manifest flow from a clean `main` branch with a signed release tag:
 
 ```sh
+git status --short
+git tag -s "v0.1.6" -m "Release v0.1.6"
 ./Scripts/publish_release.sh
 ```
 
@@ -53,7 +57,7 @@ The default commercial build does not load VLC/libVLC or mpv. An advanced build 
 - Runtime environment variables cannot widen external-engine trust in release builds.
 - The updater verifies the signed manifest, SHA-256 checksum, Developer ID Team ID, and Gatekeeper assessment before opening an update.
 - Private/local network streams, including DNS names resolving to private/local addresses, are blocked by default.
-- Playback history and saved library folders can be disabled, cleared immediately, or cleared on quit.
+- Playback history is off by default; saved playback history and saved library folders can be enabled, cleared immediately, or cleared on quit.
 - Recursive folder scans are capped to reduce accidental denial of service.
 
 ## If You Later Bundle Third-Party Engines

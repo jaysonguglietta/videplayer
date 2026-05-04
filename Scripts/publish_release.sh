@@ -32,6 +32,22 @@ case "$UPDATE_SIGNING_PRIVATE_KEY" in
         ;;
 esac
 
+SYNC_PATHS=(
+    "$HOME/SynologyDrive"
+    "$HOME/Library/Mobile Documents"
+    "$HOME/Dropbox"
+    "$HOME/Google Drive"
+    "$HOME/OneDrive"
+)
+for sync_path in "${SYNC_PATHS[@]}"; do
+    case "$UPDATE_SIGNING_PRIVATE_KEY" in
+        "$sync_path"/*)
+            echo "Refusing to use an update signing private key inside a synced folder: $sync_path" >&2
+            exit 1
+            ;;
+    esac
+done
+
 if [[ ! -f "$UPDATE_SIGNING_PRIVATE_KEY" ]]; then
     echo "Missing update signing private key: $UPDATE_SIGNING_PRIVATE_KEY" >&2
     echo "Generate one with:" >&2
@@ -41,7 +57,27 @@ if [[ ! -f "$UPDATE_SIGNING_PRIVATE_KEY" ]]; then
     exit 1
 fi
 
+KEY_MODE="$(stat -f "%Lp" "$UPDATE_SIGNING_PRIVATE_KEY")"
+KEY_DIR="$(dirname "$UPDATE_SIGNING_PRIVATE_KEY")"
+KEY_DIR_MODE="$(stat -f "%Lp" "$KEY_DIR")"
+if [[ "$KEY_MODE" != "600" ]]; then
+    echo "Refusing to use update signing key with permissions $KEY_MODE. Run: chmod 600 \"$UPDATE_SIGNING_PRIVATE_KEY\"" >&2
+    exit 1
+fi
+if [[ "$KEY_DIR_MODE" != "700" ]]; then
+    echo "Refusing to use update signing key directory with permissions $KEY_DIR_MODE. Run: chmod 700 \"$KEY_DIR\"" >&2
+    exit 1
+fi
+
 if [[ "$DRY_RUN" != "1" ]]; then
+    if [[ "$CURRENT_BRANCH" != "main" ]]; then
+        echo "Refusing to publish a production release from branch $CURRENT_BRANCH. Switch to main first." >&2
+        exit 1
+    fi
+    if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+        echo "Refusing to publish with uncommitted changes." >&2
+        exit 1
+    fi
     if ! command -v gh >/dev/null 2>&1; then
         echo "GitHub CLI is required. Install it, then run: gh auth login" >&2
         exit 1
@@ -100,10 +136,25 @@ if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
 fi
 
+if ! git -C "$ROOT_DIR" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    echo "Refusing to publish without a local release tag: $TAG" >&2
+    echo "Create a signed tag at the release commit first: git tag -s \"$TAG\" -m \"Release $TAG\"" >&2
+    exit 1
+fi
+if ! git -C "$ROOT_DIR" tag -v "$TAG" >/dev/null 2>&1; then
+    echo "Refusing to publish because $TAG is not a verifiable signed tag." >&2
+    echo "Create it with: git tag -s \"$TAG\" -m \"Release $TAG\"" >&2
+    exit 1
+fi
+if [[ "$(git -C "$ROOT_DIR" rev-list -n 1 "$TAG")" != "$(git -C "$ROOT_DIR" rev-parse HEAD)" ]]; then
+    echo "Refusing to publish because $TAG does not point at HEAD." >&2
+    exit 1
+fi
+
 if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
     gh release create "$TAG" \
         --repo "$REPO" \
-        --target main \
+        --verify-tag \
         --title "$APP_NAME $VERSION" \
         --notes "Release $TAG of $APP_NAME. Includes a signed update manifest and verified DMG asset."
 fi

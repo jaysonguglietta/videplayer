@@ -39,13 +39,11 @@ Default builds use `Packaging/VideoPlayer.entitlements`, which enables App Sandb
 
 ## Optional VLC Runtime Lookup
 
-External engines are available only in builds created with `ENABLE_EXTERNAL_ENGINES=1`. At runtime, external engines are considered only when the user enables Playback > Enable External VLC/mpv Engines. The app then searches for LibVLC in this order and verifies the containing code signature, Gatekeeper assessment, and Team ID against `VPTrustedExternalEngineTeamIDs`:
+External engines are available only in builds created with `ENABLE_EXTERNAL_ENGINES=1`. At runtime, external engines are considered only when the user enables Playback > Enable External VLC/mpv Engines. The app only supports LibVLC from the signed VLC application bundle and verifies the containing code signature, Gatekeeper assessment, and Team ID against `VPTrustedExternalEngineTeamIDs`:
 
 1. `/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib`
-2. `/opt/homebrew/lib/libvlc.dylib`
-3. `/usr/local/lib/libvlc.dylib`
 
-If LibVLC is unavailable, the app can fall back to `mpv` for advanced formats when `mpv` is installed at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv` and passes the same trust checks. `PATH` lookup is disabled by default to avoid path hijacking. `VIDEOPLAYER_ALLOW_PATH_MPV`, `VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS`, and `VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES` are debug-only development overrides and are not honored by release builds.
+Raw Homebrew LibVLC library paths are intentionally not used because sibling `libvlccore` and plugin loading creates a wider trust surface. If LibVLC is unavailable, the app can fall back to `mpv` for advanced formats when `mpv` is installed at `/opt/homebrew/bin/mpv`, `/usr/local/bin/mpv`, or `/Applications/mpv.app/Contents/MacOS/mpv` and passes the same trust checks. `PATH` lookup is disabled by default to avoid path hijacking. `VIDEOPLAYER_ALLOW_PATH_MPV`, `VIDEOPLAYER_TRUSTED_ENGINE_TEAM_IDS`, and `VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES` are debug-only development overrides and are not honored by release builds.
 
 To build the advanced variant:
 
@@ -91,24 +89,38 @@ It compares the latest release tag against `CFBundleShortVersionString`, downloa
 To publish an update:
 
 1. Bump `APP_VERSION` and `APP_BUILD` in `Scripts/build_app.sh`.
-2. Keep `$HOME/.videoplayer-release/update-signing-private-key.pem` private, outside synced project folders, and backed up securely. The matching public key is pinned in `Sources/VideoPlayer/UpdateManifest.swift`.
-3. Configure `CODE_SIGN_IDENTITY`, `NOTARY_PROFILE`, and `EXPECTED_DEVELOPER_TEAM_ID`.
-4. Log in with `gh auth login`.
-5. Run:
+2. Keep `$HOME/.videoplayer-release/update-signing-private-key.pem` private, outside the repository and common synced folders, and backed up securely. The matching public key is pinned in `Sources/VideoPlayer/UpdateManifest.swift`.
+3. Lock down the release key directory and key:
+
+```sh
+chmod 700 "$HOME/.videoplayer-release"
+chmod 600 "$HOME/.videoplayer-release/update-signing-private-key.pem"
+```
+
+4. Commit the release on a clean `main` branch.
+5. Create a signed tag at the release commit, for example:
+
+```sh
+git tag -s "v0.1.6" -m "Release v0.1.6"
+```
+
+6. Configure `CODE_SIGN_IDENTITY`, `NOTARY_PROFILE`, and `EXPECTED_DEVELOPER_TEAM_ID`.
+7. Log in with `gh auth login`.
+8. Run:
 
 ```sh
 ./Scripts/publish_release.sh
 ```
 
-The script builds `Build/Video Player.dmg`, creates a signed update manifest, refuses to publish without Developer ID signing/notarization, refuses update private keys inside the repository, refuses `ALLOW_UNNOTARIZED_RELEASE=1` on `main`, creates or updates a semver-style GitHub Release such as `v0.2.0`, and attaches both the DMG and manifest.
+The script builds `Build/Video Player.dmg`, creates a signed update manifest, refuses to publish without Developer ID signing/notarization, refuses update private keys inside the repository or common synced folders, verifies key permissions, refuses dirty worktrees, refuses production publishing away from `main`, requires the release tag to exist at `HEAD`, refuses `ALLOW_UNNOTARIZED_RELEASE=1` on `main`, creates or updates a semver-style GitHub Release such as `v0.2.0`, and attaches both the DMG and manifest.
 
 ## State Storage
 
-Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore` when history saving is enabled. When history saving is disabled, playlists, recent media, resume positions, and saved library folders are not persisted. Network stream credentials, query strings, and fragments are redacted before URL persistence to avoid storing signed stream tokens. Privacy controls can disable saved playback history, clear history on quit, and clear all stored playback history.
+Playback positions, playlist URLs, selected playlist item, recent media, saved library folders, volume, audio preset, and playback speed are stored in `UserDefaults` through `PlaybackStateStore` when history saving is enabled. History saving is off by default. When history saving is disabled, playlists, recent media, resume positions, and saved library folders are not persisted. Network stream credentials, query strings, and fragments are redacted before URL persistence to avoid storing signed stream tokens. Privacy controls can enable saved playback history, clear history on quit, and clear all stored playback history.
 
 ## Network Stream Policy
 
-`NetworkStreamValidator` accepts only HTTP, HTTPS, RTSP, and RTSPS. Loopback, link-local, multicast, RFC1918, CGNAT, benchmark ranges, `.local`, `localhost`, single-label hosts, and DNS names resolving to private/local addresses are blocked by default to reduce client-side SSRF and local-network probing risk. Users can enable Privacy > Allow Private Network Streams for trusted LAN cameras or local streams.
+`NetworkStreamValidator` accepts only HTTP, HTTPS, RTSP, and RTSPS. Loopback, link-local, multicast, RFC1918, CGNAT, benchmark ranges, `.local`, `localhost`, single-label hosts, and DNS names resolving to private/local addresses are blocked by default to reduce client-side SSRF and local-network probing risk. DNS checks run off the main UI path with a short timeout and fail closed when private network streams are disabled. Users can enable Privacy > Allow Private Network Streams for trusted LAN cameras or local streams.
 
 ## Optional LibVLC Features
 

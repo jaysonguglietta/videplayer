@@ -12,7 +12,7 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - Embedded audio/subtitle track selectors when using a user-installed VLC/libVLC engine.
 - Left-pane metadata inspector that shows file details before playback starts.
 - Optional user-installed LibVLC metadata parsing for embedded movie, TV, artwork, language, and track details.
-- Recent files and saved library folders.
+- Recent files and saved library folders when playback history is enabled.
 - External subtitle loading for SRT, ASS, SSA, and VTT files.
 - Subtitle delay control.
 - A-B loop markers for repeating a section.
@@ -22,9 +22,9 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - Video adjustment panel for brightness, contrast, saturation, hue, and gamma.
 - Mini player, floating picture-in-picture-style window, theater mode, hideable sidebar, and full screen.
 - Playback resume per file or stream.
-- Playlist, selected item, volume, and speed persistence.
+- Volume and speed persistence, with playlist/history persistence available as an opt-in privacy setting.
 - Network stream opening for public HTTP, HTTPS, RTSP, and HLS-style URLs; private/local targets and DNS names resolving to private/local addresses are blocked by default.
-- Privacy controls for disabling saved playback history, clearing history on quit, and clearing all history.
+- Privacy controls for enabling saved playback history, clearing history on quit, and clearing all history.
 - On-screen HUD for seek, volume, speed, subtitle, and resume feedback.
 
 ## Controls
@@ -85,9 +85,12 @@ To build the advanced external-engine variant instead of the sandboxed native-on
 
 Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater requires a signed `video-player-update.json` manifest, verifies the manifest against the app's pinned public key, downloads the referenced `.dmg`, verifies its SHA-256, verifies the Developer ID Team ID, and runs Gatekeeper assessment before offering to open it.
 
-To publish an update, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), keep the private update key outside the repo, configure Developer ID signing and notarization, then run:
+To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), keep the private update key outside the repo and common sync folders, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
 
 ```sh
+chmod 700 "$HOME/.videoplayer-release"
+chmod 600 "$HOME/.videoplayer-release/update-signing-private-key.pem"
+git tag -s "v0.1.6" -m "Release v0.1.6"
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"

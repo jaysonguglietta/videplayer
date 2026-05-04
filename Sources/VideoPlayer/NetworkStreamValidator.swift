@@ -6,8 +6,7 @@ enum NetworkStreamValidator {
 
     static func validatedURL(
         from value: String,
-        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
-        resolvedAddressesForHost: (String) -> [String] = SystemNetworkAddressResolver.resolvedAddresses
+        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams()
     ) -> URL? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -22,8 +21,29 @@ enum NetworkStreamValidator {
 
         if !allowPrivateNetworkHosts {
             guard !isPrivateOrLocalHost(host) else { return nil }
-            let resolvedAddresses = resolvedAddressesForHost(host)
-            guard !resolvedAddresses.contains(where: isPrivateOrLocalHost) else { return nil }
+        }
+
+        return url
+    }
+
+    static func validatedURLResolvingHost(
+        from value: String,
+        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        resolvedAddressesForHost: @escaping (String) async -> [String]? = SystemNetworkAddressResolver.resolvedAddresses
+    ) async -> URL? {
+        guard let url = validatedURL(from: value, allowPrivateNetworkHosts: allowPrivateNetworkHosts) else {
+            return nil
+        }
+
+        guard !allowPrivateNetworkHosts, let host = url.host else {
+            return url
+        }
+
+        guard let resolvedAddresses = await resolvedAddressesForHost(host),
+              !resolvedAddresses.isEmpty,
+              !resolvedAddresses.contains(where: isPrivateOrLocalHost)
+        else {
+            return nil
         }
 
         return url
@@ -53,7 +73,19 @@ enum NetworkStreamValidator {
 }
 
 enum SystemNetworkAddressResolver {
-    static func resolvedAddresses(for host: String) -> [String] {
+    static func resolvedAddresses(for host: String) async -> [String]? {
+        await withCheckedContinuation { continuation in
+            let resolver = ResolverContinuation(continuation: continuation)
+            DispatchQueue.global(qos: .utility).async {
+                resolver.resume(with: resolvedAddressesSync(for: host))
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                resolver.resume(with: nil)
+            }
+        }
+    }
+
+    static func resolvedAddressesSync(for host: String) -> [String]? {
         var hints = addrinfo(
             ai_flags: AI_ADDRCONFIG,
             ai_family: AF_UNSPEC,
@@ -66,7 +98,7 @@ enum SystemNetworkAddressResolver {
         )
         var resultPointer: UnsafeMutablePointer<addrinfo>?
         let status = getaddrinfo(host, nil, &hints, &resultPointer)
-        guard status == 0, let firstResult = resultPointer else { return [] }
+        guard status == 0, let firstResult = resultPointer else { return nil }
         defer { freeaddrinfo(firstResult) }
 
         var addresses: [String] = []
@@ -88,6 +120,24 @@ enum SystemNetworkAddressResolver {
             current = addressInfo.pointee.ai_next
         }
         return addresses
+    }
+
+    private final class ResolverContinuation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var didResume = false
+        private let continuation: CheckedContinuation<[String]?, Never>
+
+        init(continuation: CheckedContinuation<[String]?, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(with addresses: [String]?) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !didResume else { return }
+            didResume = true
+            continuation.resume(returning: addresses)
+        }
     }
 }
 

@@ -82,7 +82,7 @@ enum PrivacySettings {
     }
 
     static func savePlaybackHistory(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: Key.savePlaybackHistory) as? Bool ?? true
+        defaults.object(forKey: Key.savePlaybackHistory) as? Bool ?? false
     }
 
     static func setSavePlaybackHistory(_ enabled: Bool, defaults: UserDefaults = .standard) {

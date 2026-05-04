@@ -892,13 +892,8 @@ private final class DynamicLibVLC {
     }
 
     static func findLibrary() -> URL? {
-        let candidates = [
-            "/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib",
-            "/opt/homebrew/lib/libvlc.dylib",
-            "/usr/local/lib/libvlc.dylib"
-        ]
         let fileManager = FileManager.default
-        return candidates
+        return candidateLibraryPaths()
             .map { URL(fileURLWithPath: $0) }
             .first {
                 fileManager.isReadableFile(atPath: $0.path)
@@ -906,14 +901,28 @@ private final class DynamicLibVLC {
             }
     }
 
+    static func candidateLibraryPaths() -> [String] {
+        [
+            "/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib"
+        ]
+    }
+
     private static func findCoreLibrary(for libraryURL: URL) -> URL? {
         let candidate = libraryURL
             .deletingLastPathComponent()
             .appendingPathComponent("libvlccore.dylib")
-        return FileManager.default.isReadableFile(atPath: candidate.path) ? candidate : nil
+        guard FileManager.default.isReadableFile(atPath: candidate.path),
+              ExternalMediaEngineTrust.isEngineAllowed(at: candidate)
+        else {
+            return nil
+        }
+        return candidate
     }
 
     private static func pluginPath(for libraryURL: URL) -> String? {
+        guard verificationTarget(forRuntimePath: libraryURL).pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
+            return nil
+        }
         let runtimeRoot = libraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -925,6 +934,9 @@ private final class DynamicLibVLC {
     }
 
     private static func dataPath(for libraryURL: URL) -> String? {
+        guard verificationTarget(forRuntimePath: libraryURL).pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
+            return nil
+        }
         let runtimeRoot = libraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -933,6 +945,10 @@ private final class DynamicLibVLC {
             runtimeRoot.appendingPathComponent("share/vlc").path
         ]
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private static func verificationTarget(forRuntimePath url: URL) -> URL {
+        ExternalMediaEngineTrust.verificationTarget(for: url)
     }
 
     private static func load<T>(_ symbol: String, from handle: UnsafeMutableRawPointer, as type: T.Type) throws -> T {

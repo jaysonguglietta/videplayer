@@ -31,27 +31,39 @@ final class SecurityHelpersTests: XCTestCase {
         ))
     }
 
-    func testNetworkStreamValidatorBlocksDNSResolvedPrivateTargets() {
-        let resolver: (String) -> [String] = { host in
+    func testNetworkStreamValidatorBlocksDNSResolvedPrivateTargets() async {
+        let resolver: (String) async -> [String]? = { host in
             host == "public.example.com" ? ["127.0.0.1"] : []
         }
 
-        XCTAssertNil(NetworkStreamValidator.validatedURL(
+        let blockedURL = await NetworkStreamValidator.validatedURLResolvingHost(
             from: "https://public.example.com/live.m3u8",
             resolvedAddressesForHost: resolver
-        ))
-        XCTAssertNotNil(NetworkStreamValidator.validatedURL(
+        )
+        XCTAssertNil(blockedURL)
+
+        let allowedURL = await NetworkStreamValidator.validatedURLResolvingHost(
             from: "https://public.example.com/live.m3u8",
             allowPrivateNetworkHosts: true,
             resolvedAddressesForHost: resolver
-        ))
+        )
+        XCTAssertNotNil(allowedURL)
     }
 
-    func testNetworkStreamValidatorAllowsDNSResolvedPublicTargets() {
-        XCTAssertNotNil(NetworkStreamValidator.validatedURL(
+    func testNetworkStreamValidatorAllowsDNSResolvedPublicTargets() async {
+        let url = await NetworkStreamValidator.validatedURLResolvingHost(
             from: "https://media.example.com/live.m3u8",
             resolvedAddressesForHost: { _ in ["93.184.216.34"] }
-        ))
+        )
+        XCTAssertNotNil(url)
+    }
+
+    func testNetworkStreamValidatorFailsClosedWhenDNSDoesNotResolve() async {
+        let url = await NetworkStreamValidator.validatedURLResolvingHost(
+            from: "https://missing.example.com/live.m3u8",
+            resolvedAddressesForHost: { _ in nil }
+        )
+        XCTAssertNil(url)
     }
 
     func testSafeDownloadFileNameRemovesPathTraversal() {
@@ -117,6 +129,7 @@ final class SecurityHelpersTests: XCTestCase {
         defaults.set(["https://user:pass@example.com/movie.m3u8?token=secret#frag"], forKey: "recentMedia")
         defaults.set(["https://user:pass@example.com/movie.m3u8?token=secret#frag"], forKey: "playlist")
         defaults.set(["https://user:pass@example.com/movie.m3u8?token=secret#frag": 42.0], forKey: "positions")
+        PrivacySettings.setSavePlaybackHistory(true, defaults: defaults)
 
         let store = PlaybackStateStore(defaults: defaults)
         let item = MediaItem(url: try XCTUnwrap(URL(string: "https://user:pass@example.com/movie.m3u8?token=secret#frag")))
@@ -147,6 +160,14 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertTrue(store.loadRecentMedia().isEmpty)
         XCTAssertTrue(store.loadLibraryFolders().isEmpty)
         XCTAssertEqual(store.position(for: item), 0)
+    }
+
+    func testPlaybackHistoryDefaultsOff() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(PrivacySettings.savePlaybackHistory(defaults: defaults))
     }
 
     func testTrustedEngineTeamIDsIgnoreEnvironmentWhenDevelopmentOverridesDisabled() {
@@ -190,6 +211,15 @@ final class SecurityHelpersTests: XCTestCase {
             "VIDEOPLAYER_ALLOW_PATH_MPV": "1"
         ])
         XCTAssertTrue(optInCandidates.contains("/tmp/tools/mpv"))
+
+        let releaseCandidates = MPVBridge.candidateExecutablePaths(
+            environment: [
+                "PATH": "/tmp/tools",
+                "VIDEOPLAYER_ALLOW_PATH_MPV": "1"
+            ],
+            includeDevelopmentPathLookup: false
+        )
+        XCTAssertFalse(releaseCandidates.contains("/tmp/tools/mpv"))
     }
 
     func testTeamIdentifierParsing() {

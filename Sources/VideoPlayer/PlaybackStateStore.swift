@@ -80,7 +80,10 @@ final class PlaybackStateStore {
     }
 
     func loadRecentMedia() -> [MediaItem] {
-        sanitizedURLStrings(forKey: Key.recentMedia).compactMap { value in
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else {
+            return []
+        }
+        return sanitizedURLStrings(forKey: Key.recentMedia).compactMap { value in
             guard let url = URL(string: value) else { return nil }
             if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
                 return nil
