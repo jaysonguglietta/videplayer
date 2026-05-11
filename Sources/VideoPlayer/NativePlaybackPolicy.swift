@@ -74,8 +74,8 @@ enum NativePlaybackPolicy {
 
         if !normalizedExtension.isEmpty, !nativeExtensions.contains(normalizedExtension) {
             return NativePlaybackAssessment(
-                routing: .preferExternal,
-                reason: "This file type is outside the Apple-native playback list. A trusted VLC/mpv engine is preferred when available.",
+                routing: .requiresExternal,
+                reason: "This file type is outside the Apple-native playback list. Playback needs a trusted VLC/mpv engine.",
                 detectedVideoCodecs: normalizedCodecs
             )
         }

@@ -2,7 +2,7 @@
 
 ## Opening Media
 
-Use the Open Media action in the empty player, File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Some MP4 files contain Dolby Vision or HEVC/x265 video that macOS can expose as audio-only; the app detects those codecs before playback and uses a trusted external engine when available. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work only in an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
+Use the Open Media action in the empty player, File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Some MP4 files contain Dolby Vision or HEVC/x265 video that macOS can expose as audio-only; the app detects those codecs before playback and uses a trusted external engine when available. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS require an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
 
 Use Open Stream in the empty player or File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. The app checks public stream hosts before adding them to the playlist and again before playback. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
 
@@ -42,7 +42,7 @@ Keyboard shortcuts:
 
 Use View > Toggle Sidebar to show or hide the playlist and inspector. Use View > Mini Player for a small floating player, View > Picture in Picture for a floating playback window, View > Theater Mode for a clean playback-focused view, or the full-screen button for macOS full screen.
 
-Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines when the app was built as an advanced external-engine variant. Default commercial builds keep this option unavailable. Advanced builds only use external engines when strict code-signature, Team ID, and Gatekeeper checks trust the engine. If a file requires an external engine for video, the app can prompt you to enable trusted external playback before it starts.
+Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines when the app was built as an advanced external-engine variant. Default commercial builds keep this option unavailable. Advanced builds only use external engines when strict code-signature, Team ID, and Gatekeeper checks trust the engine. If a file requires an external engine for video, the app can prompt you to enable trusted external playback before it starts instead of repeatedly trying Apple-native playback.
 
 If a local file starts with sound but no picture under Apple-native playback, Video Player stops the native attempt and either falls back to a trusted VLC/mpv engine or shows a codec message explaining that the current build cannot render that video stream.
 

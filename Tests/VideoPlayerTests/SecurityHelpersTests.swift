@@ -7,9 +7,9 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertTrue(VersionComparator.isVersion("v0.1.10", newerThan: "0.1.2"))
         XCTAssertFalse(VersionComparator.isVersion("v0.1.2", newerThan: "0.1.2"))
         XCTAssertFalse(VersionComparator.isVersion("0.1.1", newerThan: "0.1.2"))
-        XCTAssertEqual(VersionComparator.compare("v0.1.1", to: "0.1.7"), .orderedAscending)
-        XCTAssertEqual(VersionComparator.compare("v0.1.7", to: "0.1.7"), .orderedSame)
-        XCTAssertEqual(VersionComparator.compare("v0.1.10", to: "0.1.7"), .orderedDescending)
+        XCTAssertEqual(VersionComparator.compare("v0.1.1", to: "0.1.8"), .orderedAscending)
+        XCTAssertEqual(VersionComparator.compare("v0.1.8", to: "0.1.8"), .orderedSame)
+        XCTAssertEqual(VersionComparator.compare("v0.1.10", to: "0.1.8"), .orderedDescending)
     }
 
     func testNetworkStreamValidatorRestrictsSchemes() {
@@ -280,20 +280,21 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertFalse(assessment.prefersExternalEngine)
     }
 
-    func testNativePlaybackPolicyPrefersExternalForNonNativeContainer() {
+    func testNativePlaybackPolicyRequiresExternalForNonNativeContainer() {
         let assessment = NativePlaybackPolicy.assessment(
             fileExtension: "mkv",
             nativeExtensions: ["mp4", "m4v", "mov"],
             videoCodecs: ["avc1"]
         )
 
-        XCTAssertEqual(assessment.routing, .preferExternal)
+        XCTAssertEqual(assessment.routing, .requiresExternal)
         XCTAssertTrue(assessment.prefersExternalEngine)
+        XCTAssertTrue(assessment.requiresExternalEngine)
     }
 
     func testUpdateReleaseSelectorReportsInstalledBuildNewerThanPublishedRelease() throws {
         let release = try makeRelease(tagName: "v0.1.1")
-        let availability = UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.7")
+        let availability = UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.8")
 
         XCTAssertEqual(availability, .installedBuildIsNewer(release))
     }
@@ -309,20 +310,20 @@ final class SecurityHelpersTests: XCTestCase {
         let selected = UpdateReleaseSelector.newestPublishedRelease(from: releases)
         XCTAssertEqual(selected?.tagName, "v0.1.10")
         XCTAssertEqual(
-            UpdateReleaseSelector.availability(from: releases, currentVersion: "0.1.7"),
+            UpdateReleaseSelector.availability(from: releases, currentVersion: "0.1.8"),
             .updateAvailable(try makeRelease(tagName: "v0.1.10"))
         )
     }
 
     func testUpdateReleaseSelectorHandlesUpToDateAndEmptyReleaseLists() throws {
-        let release = try makeRelease(tagName: "v0.1.7")
+        let release = try makeRelease(tagName: "v0.1.8")
 
         XCTAssertEqual(
-            UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.7"),
+            UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.8"),
             .upToDate(release)
         )
         XCTAssertEqual(
-            UpdateReleaseSelector.availability(from: [], currentVersion: "0.1.7"),
+            UpdateReleaseSelector.availability(from: [], currentVersion: "0.1.8"),
             .noPublishedReleases
         )
     }

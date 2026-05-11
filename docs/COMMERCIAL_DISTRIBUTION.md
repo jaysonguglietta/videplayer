@@ -33,9 +33,9 @@ export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 
 ```sh
 git status --short
-git tag -s "v0.1.7" -m "Release v0.1.7"
+git tag -s "v0.1.8" -m "Release v0.1.8"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
-export RELEASE_APPROVAL="v0.1.7"
+export RELEASE_APPROVAL="v0.1.8"
 ./Scripts/publish_release.sh
 ```
 

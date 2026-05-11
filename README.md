@@ -45,7 +45,7 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 
 The default sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. This default build is sandboxed and does not load third-party media engines. Some MP4 files still contain advanced video such as Dolby Vision or HEVC/x265; the app inspects local video sample entries before playback so those files can be routed to a trusted external engine when available instead of silently playing audio-only.
 
-For broad codec coverage, an advanced build can use a copy of VLC/libVLC that the user installed separately. This build mode is disabled by default; it must be created with `ENABLE_EXTERNAL_ENGINES=1`, users must enable external engines, and the engine must pass strict code-signature, Team ID, and Gatekeeper checks. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
+For broad codec coverage, an advanced build can use a copy of VLC/libVLC that the user installed separately. This build mode is disabled by default; it must be created with `ENABLE_EXTERNAL_ENGINES=1`, users must enable external engines, and the engine must pass strict code-signature, Team ID, and Gatekeeper checks. Non-Apple-native containers such as MKV, WebM, AVI, and FLV require an advanced trusted external-engine build rather than a doomed AVFoundation fallback. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
 
 If VLC is not installed, `mpv` can also be used as a fallback external playback engine:
 
@@ -88,6 +88,8 @@ The release DMG is created at `Build/Video Player.dmg`.
 
 To build the advanced external-engine variant instead of the sandboxed native-only default, also set `ENABLE_EXTERNAL_ENGINES=1` and `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` to the exact Team IDs you intend to trust.
 
+For local QA only, debug development builds can set `BUILD_CONFIGURATION=debug` and `ALLOW_UNVERIFIED_EXTERNAL_ENGINES=1` to test playback against a known local VLC copy when macOS signature validation is failing. Do not use that override for release, notarized, or customer builds.
+
 ## Updates and Licenses
 
 Use Video Player > Check for Updates or Help > Check for Updates to look for the newest published GitHub Release by version. If the installed build is newer than the newest published release, the app reports that no newer update is available and tells you to publish the current version. For newer releases, the updater requires a signed `video-player-update.json` manifest, verifies the manifest against the app's pinned public key, downloads the referenced `.dmg`, verifies its SHA-256, verifies the Developer ID Team ID, and runs Gatekeeper assessment before offering to open it.
@@ -95,12 +97,12 @@ Use Video Player > Check for Updates or Help > Check for Updates to look for the
 To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), store the private update key in Keychain as a generic password named `videoplayer-update-signing-private-key`, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
 
 ```sh
-git tag -s "v0.1.7" -m "Release v0.1.7"
+git tag -s "v0.1.8" -m "Release v0.1.8"
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
-export RELEASE_APPROVAL="v0.1.7"
+export RELEASE_APPROVAL="v0.1.8"
 ./Scripts/publish_release.sh
 ```
 

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
 BUNDLE_ID="${BUNDLE_ID:-com.jaysonguglietta.videoplayer}"
-APP_VERSION="${APP_VERSION:-0.1.7}"
-APP_BUILD="${APP_BUILD:-8}"
+APP_VERSION="${APP_VERSION:-0.1.8}"
+APP_BUILD="${APP_BUILD:-9}"
 BUILD_DIR="$ROOT_DIR/Build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -14,6 +14,8 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 ENABLE_EXTERNAL_ENGINES="${ENABLE_EXTERNAL_ENGINES:-0}"
 DEVELOPMENT_BUILD="${DEVELOPMENT_BUILD:-0}"
+BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-release}"
+ALLOW_UNVERIFIED_EXTERNAL_ENGINES="${ALLOW_UNVERIFIED_EXTERNAL_ENGINES:-0}"
 REQUIRE_DEVELOPER_ID="${REQUIRE_DEVELOPER_ID:-}"
 EXPECTED_DEVELOPER_TEAM_ID="${EXPECTED_DEVELOPER_TEAM_ID:-${APPLE_TEAM_ID:-}}"
 TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="${TRUSTED_EXTERNAL_ENGINE_TEAM_IDS:-}"
@@ -24,6 +26,20 @@ if [[ "$ENABLE_EXTERNAL_ENGINES" == "1" ]]; then
 else
     ENTITLEMENTS_PATH="$ROOT_DIR/Packaging/VideoPlayer.entitlements"
     EXTERNAL_MEDIA_ENGINES_PLIST_VALUE="false"
+fi
+
+case "$BUILD_CONFIGURATION" in
+    debug|release)
+        ;;
+    *)
+        echo "BUILD_CONFIGURATION must be debug or release." >&2
+        exit 1
+        ;;
+esac
+
+UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE="false"
+if [[ "$DEVELOPMENT_BUILD" == "1" && "$BUILD_CONFIGURATION" == "debug" && "$ALLOW_UNVERIFIED_EXTERNAL_ENGINES" == "1" ]]; then
+    UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE="true"
 fi
 
 cd "$ROOT_DIR"
@@ -59,12 +75,12 @@ if [[ "$DEVELOPMENT_BUILD" != "1" && "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
     fi
 fi
 
-swift build -c release
+swift build -c "$BUILD_CONFIGURATION"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp ".build/release/VideoPlayer" "$MACOS_DIR/VideoPlayer"
+cp ".build/$BUILD_CONFIGURATION/VideoPlayer" "$MACOS_DIR/VideoPlayer"
 chmod +x "$MACOS_DIR/VideoPlayer"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -100,6 +116,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>$TRUSTED_EXTERNAL_ENGINE_TEAM_IDS</string>
     <key>VPExternalMediaEnginesAvailable</key>
     <$EXTERNAL_MEDIA_ENGINES_PLIST_VALUE/>
+    <key>VPAllowUnverifiedExternalEnginesForDevelopment</key>
+    <$UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE/>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

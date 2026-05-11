@@ -44,6 +44,7 @@ enum AppSecurityPolicy {
     static var allowsUnverifiedExternalEnginesForDevelopment: Bool {
         #if DEBUG
         ProcessInfo.processInfo.environment["VIDEOPLAYER_ALLOW_UNVERIFIED_ENGINES"] == "1"
+            || (Bundle.main.object(forInfoDictionaryKey: "VPAllowUnverifiedExternalEnginesForDevelopment") as? Bool ?? false)
         #else
         false
         #endif

@@ -17,7 +17,7 @@
 swift run
 ```
 
-The app uses AVFoundation for Apple-native playback. The default commercial distribution is sandboxed and native-only. It does not bundle or load VLC, libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines. `NativePlaybackPolicy` inspects local video format descriptions before playback; Dolby Vision sample entries require a trusted external engine, HEVC/x265 prefers one when available, and a native playback watchdog catches audio-only native starts so the app can fail over or show a clear codec message.
+The app uses AVFoundation for Apple-native playback. The default commercial distribution is sandboxed and native-only. It does not bundle or load VLC, libVLC, VLC plugins, mpv, FFmpeg, or other third-party media engines. `NativePlaybackPolicy` inspects local video format descriptions before playback; Dolby Vision sample entries and non-Apple-native containers require a trusted external engine, HEVC/x265 prefers one when available, and a native playback watchdog catches audio-only native starts so the app can fail over or show a clear codec message.
 
 LibVLC integration is kept behind `VLCBridge` for advanced external-engine builds. New symbols should be loaded dynamically and treated as optional unless playback cannot work without them; this keeps the app tolerant of different VLC 3.x builds. External engines are unavailable in default builds and must pass strict code-signature, configured Team ID, and Gatekeeper validation in advanced builds. VLC runtime loading must validate `libvlc.dylib` and `libvlccore.dylib`; plugin/data paths are allowed only inside a verified `.app` runtime so raw dylib installs cannot load unverified sibling plugins.
 
@@ -65,6 +65,19 @@ export TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="TEAMID"
 ./Scripts/build_release_dmg.sh
 ```
 
+For local playback QA only, a debug development app can bypass external-engine signature checks when the separately installed engine is known but macOS signature validation is failing locally:
+
+```sh
+DEVELOPMENT_BUILD=1 \
+BUILD_CONFIGURATION=debug \
+ENABLE_EXTERNAL_ENGINES=1 \
+TRUSTED_EXTERNAL_ENGINE_TEAM_IDS="TEAMID" \
+ALLOW_UNVERIFIED_EXTERNAL_ENGINES=1 \
+./Scripts/build_app.sh
+```
+
+Do not use that debug-only override for release, notarized, or customer builds.
+
 ## Build a Release DMG
 
 ```sh
@@ -108,7 +121,7 @@ To publish an update:
 5. Create a signed tag at the release commit, for example:
 
 ```sh
-git tag -s "v0.1.7" -m "Release v0.1.7"
+git tag -s "v0.1.8" -m "Release v0.1.8"
 ```
 
 6. Configure `CODE_SIGN_IDENTITY`, `NOTARY_PROFILE`, `EXPECTED_DEVELOPER_TEAM_ID`, `UPDATE_SIGNING_KEYCHAIN_SERVICE`, and `RELEASE_APPROVAL` with the exact tag being published.
@@ -116,7 +129,7 @@ git tag -s "v0.1.7" -m "Release v0.1.7"
 8. Run:
 
 ```sh
-export RELEASE_APPROVAL="v0.1.7"
+export RELEASE_APPROVAL="v0.1.8"
 ./Scripts/publish_release.sh
 ```
 
