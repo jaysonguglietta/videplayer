@@ -108,7 +108,7 @@ To publish an update:
 5. Create a signed tag at the release commit, for example:
 
 ```sh
-git tag -s "v0.1.6" -m "Release v0.1.6"
+git tag -s "v0.1.7" -m "Release v0.1.7"
 ```
 
 6. Configure `CODE_SIGN_IDENTITY`, `NOTARY_PROFILE`, `EXPECTED_DEVELOPER_TEAM_ID`, `UPDATE_SIGNING_KEYCHAIN_SERVICE`, and `RELEASE_APPROVAL` with the exact tag being published.
@@ -116,7 +116,7 @@ git tag -s "v0.1.6" -m "Release v0.1.6"
 8. Run:
 
 ```sh
-export RELEASE_APPROVAL="v0.1.6"
+export RELEASE_APPROVAL="v0.1.7"
 ./Scripts/publish_release.sh
 ```
 

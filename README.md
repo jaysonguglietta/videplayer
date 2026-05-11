@@ -95,12 +95,12 @@ Use Video Player > Check for Updates or Help > Check for Updates to look for the
 To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), store the private update key in Keychain as a generic password named `videoplayer-update-signing-private-key`, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
 
 ```sh
-git tag -s "v0.1.6" -m "Release v0.1.6"
+git tag -s "v0.1.7" -m "Release v0.1.7"
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
-export RELEASE_APPROVAL="v0.1.6"
+export RELEASE_APPROVAL="v0.1.7"
 ./Scripts/publish_release.sh
 ```
 
