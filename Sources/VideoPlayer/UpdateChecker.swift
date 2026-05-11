@@ -2,13 +2,14 @@ import AppKit
 import Foundation
 
 final class UpdateChecker {
-    private let latestReleaseURL = URL(string: "https://api.github.com/repos/jaysonguglietta/videplayer/releases/latest")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/jaysonguglietta/videplayer/releases?per_page=20")!
     private var activeTask: URLSessionTask?
 
     func checkForUpdates(presentingWindow: NSWindow?) {
         guard activeTask == nil else { return }
 
-        var request = URLRequest(url: latestReleaseURL)
+        AppLogger.info("Update check started url=\(releasesURL.absoluteString)", flush: true)
+        var request = URLRequest(url: releasesURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("VideoPlayer/\(OpenSourceNotices.appVersion)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -19,25 +20,19 @@ final class UpdateChecker {
             }
 
             if let error {
+                AppLogger.error("Update check request failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Could not check for updates.", detail: error.localizedDescription, presentingWindow: presentingWindow)
                 return
             }
 
             guard let httpResponse = response as? HTTPURLResponse else {
+                AppLogger.error("Update check failed because response was not HTTP", flush: true)
                 self?.showError("Could not check for updates.", detail: "GitHub did not return a valid response.", presentingWindow: presentingWindow)
                 return
             }
 
-            guard httpResponse.statusCode != 404 else {
-                self?.showError(
-                    "No releases are published yet.",
-                    detail: "Create a GitHub Release with a signed update manifest and .dmg asset to enable update downloads.",
-                    presentingWindow: presentingWindow
-                )
-                return
-            }
-
             guard (200..<300).contains(httpResponse.statusCode), let data else {
+                AppLogger.error("Update check failed HTTP status=\(httpResponse.statusCode)", flush: true)
                 self?.showError(
                     "Could not check for updates.",
                     detail: "GitHub returned HTTP \(httpResponse.statusCode).",
@@ -47,9 +42,11 @@ final class UpdateChecker {
             }
 
             do {
-                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-                self?.handle(release: release, presentingWindow: presentingWindow)
+                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+                AppLogger.info("Update check decoded releases count=\(releases.count)", flush: true)
+                self?.handle(releases: releases, presentingWindow: presentingWindow)
             } catch {
+                AppLogger.error("Update check decode failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Could not read update information.", detail: error.localizedDescription, presentingWindow: presentingWindow)
             }
         }
@@ -58,18 +55,54 @@ final class UpdateChecker {
         task.resume()
     }
 
-    private func handle(release: GitHubRelease, presentingWindow: NSWindow?) {
-        let currentVersion = OpenSourceNotices.appVersion
-        guard VersionComparator.isVersion(release.normalizedTag, newerThan: currentVersion) else {
-            showStatus(
-                "Video Player is up to date.",
-                detail: "Installed version: \(currentVersion)\nLatest release: \(release.tagName)",
+    private func handle(releases: [GitHubRelease], presentingWindow: NSWindow?) {
+        let availability = UpdateReleaseSelector.availability(
+            from: releases,
+            currentVersion: OpenSourceNotices.appVersion
+        )
+
+        switch availability {
+        case .noPublishedReleases:
+            AppLogger.info("Update check result=noPublishedReleases", flush: true)
+            showError(
+                "No releases are published yet.",
+                detail: "Create a GitHub Release with a signed update manifest and .dmg asset to enable update downloads.",
                 presentingWindow: presentingWindow
             )
-            return
+        case .installedBuildIsNewer(let release):
+            AppLogger.info("Update check result=installedBuildIsNewer installed=\(OpenSourceNotices.appVersion) newest=\(release.tagName)", flush: true)
+            showStatus(
+                "No newer update is available.",
+                detail: """
+                Installed version: \(OpenSourceNotices.appVersion)
+                Newest published release: \(release.tagName)
+
+                This installed build is newer than the newest GitHub release. Publish v\(OpenSourceNotices.appVersion) or later to make update checks line up.
+                """,
+                presentingWindow: presentingWindow
+            )
+        case .upToDate(let release):
+            AppLogger.info("Update check result=upToDate installed=\(OpenSourceNotices.appVersion) newest=\(release.tagName)", flush: true)
+            showStatus(
+                "Video Player is up to date.",
+                detail: """
+                Installed version: \(OpenSourceNotices.appVersion)
+                Newest published release: \(release.tagName)
+                """,
+                presentingWindow: presentingWindow
+            )
+        case .updateAvailable(let release):
+            AppLogger.info("Update check result=updateAvailable installed=\(OpenSourceNotices.appVersion) newest=\(release.tagName)", flush: true)
+            handle(release: release, presentingWindow: presentingWindow)
         }
+    }
+
+    private func handle(release: GitHubRelease, presentingWindow: NSWindow?) {
+        let currentVersion = OpenSourceNotices.appVersion
+        guard VersionComparator.isVersion(release.normalizedTag, newerThan: currentVersion) else { return }
 
         guard let manifestAsset = release.assets.first(where: { $0.isUpdateManifest }) else {
+            AppLogger.error("Update release missing signed manifest tag=\(release.tagName)", flush: true)
             showError(
                 "Update is missing a signed manifest.",
                 detail: "Publish \(UpdateSecurity.updateManifestAssetName) with the release so the app can verify the download before opening it.",
@@ -92,11 +125,13 @@ final class UpdateChecker {
             }
 
             if let error {
+                AppLogger.error("Manifest download failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Could not download update manifest.", detail: error.localizedDescription, presentingWindow: presentingWindow)
                 return
             }
 
             guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode), let data else {
+                AppLogger.error("Manifest download failed invalid response", flush: true)
                 self?.showError("Could not download update manifest.", detail: "GitHub did not return the signed manifest.", presentingWindow: presentingWindow)
                 return
             }
@@ -104,8 +139,10 @@ final class UpdateChecker {
             do {
                 let manifest = try UpdateSecurity.verifiedManifest(from: data)
                 try self?.validate(manifest: manifest, release: release)
+                AppLogger.info("Update manifest verified tag=\(manifest.tagName) asset=\(manifest.assetName)", flush: true)
                 self?.showUpdatePrompt(manifest: manifest, release: release, presentingWindow: presentingWindow)
             } catch {
+                AppLogger.error("Update verification failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Update verification failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
             }
         }
@@ -156,6 +193,7 @@ final class UpdateChecker {
     }
 
     private func downloadUpdate(manifest: UpdateManifest, release: GitHubRelease, presentingWindow: NSWindow?) {
+        AppLogger.info("Update download started tag=\(release.tagName) url=\(manifest.assetURL.absoluteString)", flush: true)
         var request = URLRequest(url: manifest.assetURL)
         request.setValue("VideoPlayer/\(OpenSourceNotices.appVersion)", forHTTPHeaderField: "User-Agent")
 
@@ -165,10 +203,12 @@ final class UpdateChecker {
             }
 
             if let error {
+                AppLogger.error("Update download failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Download failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
                 return
             }
             guard let temporaryURL else {
+                AppLogger.error("Update download failed because no temporary file was returned", flush: true)
                 self?.showError("Download failed.", detail: "No file was returned by GitHub.", presentingWindow: presentingWindow)
                 return
             }
@@ -183,8 +223,10 @@ final class UpdateChecker {
                     try? FileManager.default.removeItem(at: destination)
                     throw error
                 }
+                AppLogger.info("Update download verified destination=\(destination.path)", flush: true)
                 self?.showDownloadedUpdate(destination, release: release, presentingWindow: presentingWindow)
             } catch {
+                AppLogger.error("Update download verification failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Download verification failed.", detail: error.localizedDescription, presentingWindow: presentingWindow)
             }
         }
@@ -296,10 +338,44 @@ private enum UpdateCheckerError: LocalizedError {
     }
 }
 
-private struct GitHubRelease: Decodable {
+enum UpdateAvailability: Equatable {
+    case noPublishedReleases
+    case installedBuildIsNewer(GitHubRelease)
+    case upToDate(GitHubRelease)
+    case updateAvailable(GitHubRelease)
+}
+
+enum UpdateReleaseSelector {
+    static func availability(from releases: [GitHubRelease], currentVersion: String) -> UpdateAvailability {
+        guard let newestRelease = newestPublishedRelease(from: releases) else {
+            return .noPublishedReleases
+        }
+
+        switch VersionComparator.compare(newestRelease.normalizedTag, to: currentVersion) {
+        case .orderedDescending:
+            return .updateAvailable(newestRelease)
+        case .orderedAscending:
+            return .installedBuildIsNewer(newestRelease)
+        default:
+            return .upToDate(newestRelease)
+        }
+    }
+
+    static func newestPublishedRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+        releases
+            .filter { !$0.isDraft && !$0.isPrerelease && !$0.normalizedTag.isEmpty }
+            .max {
+                VersionComparator.compare($0.normalizedTag, to: $1.normalizedTag) == .orderedAscending
+            }
+    }
+}
+
+struct GitHubRelease: Decodable, Equatable {
     let tagName: String
     let htmlURL: URL
     let assets: [GitHubAsset]
+    let isDraft: Bool
+    let isPrerelease: Bool
 
     var normalizedTag: String {
         VersionComparator.normalizedVersion(tagName)
@@ -309,10 +385,12 @@ private struct GitHubRelease: Decodable {
         case tagName = "tag_name"
         case htmlURL = "html_url"
         case assets
+        case isDraft = "draft"
+        case isPrerelease = "prerelease"
     }
 }
 
-private struct GitHubAsset: Decodable {
+struct GitHubAsset: Decodable, Equatable {
     let name: String
     let contentType: String?
     let downloadURL: URL

@@ -1,12 +1,15 @@
 import AppKit
 import AVFoundation
 import AVKit
+import UniformTypeIdentifiers
 
 final class PlayerViewController: NSViewController {
     private let maximumVolume = 200.0
     private let defaultVolume = 70.0
     private let maximumScannedMediaFiles = 5_000
     private let maximumEnumeratedFolderItems = 20_000
+    private let playlistImportContentTypes = ["m3u", "m3u8"].compactMap { UTType(filenameExtension: $0) }
+    private let playlistExportContentTypes = ["m3u8"].compactMap { UTType(filenameExtension: $0) }
     private let avPlayer = AVPlayer()
     private let vlcBridge = VLCBridge()
     private let mpvBridge = MPVBridge()
@@ -24,6 +27,8 @@ final class PlayerViewController: NSViewController {
     private var timeObserver: Any?
     private var itemStatusObservation: NSKeyValueObservation?
     private var codecTimer: Timer?
+    private var nativePlaybackInspectionTask: Task<Void, Never>?
+    private var nativeVideoWatchdogTask: Task<Void, Never>?
     private var hudTimer: Timer?
     private var scrollWheelMonitor: Any?
     private var keyDownMonitor: Any?
@@ -40,6 +45,10 @@ final class PlayerViewController: NSViewController {
     private var savedWindowFrame: NSRect?
     private var savedWindowLevel: NSWindow.Level = .normal
     private var metadataRequestID = 0
+    private var playbackRequestID = 0
+    private var playlistFilter = ""
+    private var playlistSortMode: PlaylistSortMode = .currentOrder
+    private var networkStreamResolutions: [String: Set<String>] = [:]
     private var currentVideoAdjustments = VideoAdjustments()
     private var videoAdjustmentPanel: NSPanel?
     private var videoAdjustmentSliders: [VideoAdjustmentKey: NSSlider] = [:]
@@ -51,8 +60,16 @@ final class PlayerViewController: NSViewController {
     private var sidebarWidthConstraint: NSLayoutConstraint?
     private weak var playerAreaView: NSView?
     private let tableView = NSTableView()
+    private let playlistSearchField = NSSearchField()
+    private let playlistSortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private weak var removePlaylistButton: NSButton?
+    private weak var clearPlaylistButton: NSButton?
     private let metadataTextView = NSTextField(labelWithString: "Select a media item to inspect it before playback.")
-    private let emptyStateLabel = NSTextField(labelWithString: "Drop media files here or open a file")
+    private let emptyStateContainer = NSStackView()
+    private let emptyStateLabel = NSTextField(labelWithString: "Drop media files here")
+    private let emptyStateSubtitleLabel = NSTextField(labelWithString: "Open a local file, add a folder, or paste a public stream URL.")
+    private let emptyStateOpenButton = NSButton(title: "Open Media", target: nil, action: nil)
+    private let emptyStateStreamButton = NSButton(title: "Open Stream", target: nil, action: nil)
     private let hudLabel = NSTextField(labelWithString: "")
     private let nowPlayingLabel = NSTextField(labelWithString: "Ready")
     private let engineLabel = NSTextField(labelWithString: "")
@@ -100,6 +117,8 @@ final class PlayerViewController: NSViewController {
         if let keyDownMonitor {
             NSEvent.removeMonitor(keyDownMonitor)
         }
+        nativePlaybackInspectionTask?.cancel()
+        nativeVideoWatchdogTask?.cancel()
         if let timeObserver {
             avPlayer.removeTimeObserver(timeObserver)
         }
@@ -126,6 +145,50 @@ final class PlayerViewController: NSViewController {
         addMedia(from: urls, replacePlaylist: replacePlaylist, autoplay: false)
     }
 
+    func importPlaylistPanel(_ sender: Any? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Import Playlist"
+        panel.message = "Choose an M3U or M3U8 playlist file."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.allowedContentTypes = playlistImportContentTypes
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        showHUD("Importing playlist")
+        let shouldReplacePlaylist = playlist.isEmpty
+        Task { [weak self] in
+            await self?.importPlaylist(from: url, replacePlaylist: shouldReplacePlaylist)
+        }
+    }
+
+    func exportPlaylistPanel(_ sender: Any? = nil) {
+        guard !playlist.isEmpty else {
+            showHUD("Playlist is empty")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Export Playlist"
+        panel.message = "Save the current playlist as an M3U8 file."
+        panel.nameFieldStringValue = "Video Player Playlist.m3u8"
+        panel.allowedContentTypes = playlistExportContentTypes
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try exportedPlaylistText().write(to: url, atomically: true, encoding: .utf8)
+            showHUD("Playlist exported")
+        } catch {
+            showPlaylistFileError(
+                title: "Could Not Export Playlist",
+                detail: "The playlist could not be written to the selected location. \(error.localizedDescription)"
+            )
+        }
+    }
+
     @objc func openNetworkStreamDialog(_ sender: Any? = nil) {
         let alert = NSAlert()
         alert.messageText = "Open Network Stream"
@@ -135,6 +198,8 @@ final class PlayerViewController: NSViewController {
 
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
         input.placeholderString = "https://example.com/stream.m3u8"
+        input.setAccessibilityLabel("Network stream URL")
+        input.setAccessibilityHelp("Enter a public HTTP, HTTPS, RTSP, or HLS media stream URL.")
         alert.accessoryView = input
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -142,17 +207,19 @@ final class PlayerViewController: NSViewController {
         let allowPrivateNetworkHosts = stateStore.privateNetworkStreamsEnabled()
         showHUD("Checking stream")
         Task { [weak self] in
-            let url = await NetworkStreamValidator.validatedURLResolvingHost(
+            let stream = await NetworkStreamValidator.validatedStream(
                 from: streamValue,
                 allowPrivateNetworkHosts: allowPrivateNetworkHosts
             )
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let url else {
+                guard let stream else {
                     self.showHUD("Use public HTTP, HTTPS, RTSP, or HLS")
                     return
                 }
+                self.rememberValidatedNetworkStream(stream)
+                let url = stream.url
                 self.addMediaItems([MediaItem(url: url)], replacePlaylist: self.playlist.isEmpty, autoplay: false)
             }
         }
@@ -187,6 +254,39 @@ final class PlayerViewController: NSViewController {
         showHUD("Recent files cleared")
     }
 
+    @objc func removeSelectedPlaylistItems(_ sender: Any? = nil) {
+        let selectedIndexes = selectedPlaylistIndices()
+        guard !selectedIndexes.isEmpty else {
+            showHUD("Select playlist items first")
+            return
+        }
+
+        let removedVisibleRows = tableView.selectedRowIndexes
+        let activeItem = currentItem
+        let removesCurrentItem = currentIndex.map { selectedIndexes.contains($0) } ?? false
+        if removesCurrentItem {
+            stopPlayback()
+        }
+
+        playlist = PlaylistWorkflow.removing(playlist, indexes: selectedIndexes)
+
+        if removesCurrentItem {
+            currentIndex = nil
+            metadataRequestID += 1
+            metadataTextView.stringValue = "Select a media item to inspect it before playback."
+            updateNowPlaying(title: "Ready", detail: "")
+        } else if let activeItem {
+            currentIndex = playlist.firstIndex(of: activeItem)
+        }
+
+        tableView.reloadData()
+        selectNearestPlaylistRow(afterRemovingVisibleRows: removedVisibleRows)
+        updateEmptyState()
+        refreshPlaylistActionStates()
+        savePlaylistState()
+        showHUD("Removed \(selectedIndexes.count) item\(selectedIndexes.count == 1 ? "" : "s")")
+    }
+
     func savePlaybackHistoryEnabled() -> Bool {
         stateStore.savePlaybackHistoryEnabled()
     }
@@ -199,6 +299,7 @@ final class PlayerViewController: NSViewController {
             currentIndex = nil
             tableView.reloadData()
             updateEmptyState()
+            refreshPlaylistActionStates()
         }
         showHUD(enabled ? "History saving on" : "History saving off")
     }
@@ -234,11 +335,13 @@ final class PlayerViewController: NSViewController {
     @objc func toggleExternalMediaEngines(_ sender: Any? = nil) {
         guard AppSecurityPolicy.externalMediaEnginesAvailable else {
             stateStore.setExternalMediaEnginesEnabled(false)
+            AppLogger.warning("User tried to enable external engines, but this build does not allow them")
             showHUD("External engines unavailable in this build")
             return
         }
         let enabled = !stateStore.externalMediaEnginesEnabled()
         stateStore.setExternalMediaEnginesEnabled(enabled)
+        AppLogger.info("External media engines toggled enabled=\(enabled)", flush: true)
         if !enabled, currentEngine == .vlc || currentEngine == .mpv {
             stopPlayback()
         }
@@ -251,6 +354,7 @@ final class PlayerViewController: NSViewController {
         currentIndex = nil
         tableView.reloadData()
         updateEmptyState()
+        refreshPlaylistActionStates()
         showHUD("Playback history cleared")
     }
 
@@ -451,6 +555,9 @@ final class PlayerViewController: NSViewController {
 
         let resetButton = NSButton(title: "Reset", target: self, action: #selector(resetVideoAdjustments(_:)))
         resetButton.bezelStyle = .rounded
+        resetButton.toolTip = "Reset video adjustments"
+        resetButton.setAccessibilityLabel("Reset video adjustments")
+        resetButton.setAccessibilityHelp("Return brightness, contrast, saturation, hue, and gamma to their default values.")
         let buttonRow = NSStackView(views: [NSView(), resetButton])
         buttonRow.orientation = .horizontal
         buttonRow.alignment = .centerY
@@ -564,17 +671,21 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc private func clearPlaylist(_ sender: Any?) {
+        guard confirmClearPlaylist() else { return }
         stopPlayback()
         playlist.removeAll()
         currentIndex = nil
         loopStart = nil
         loopEnd = nil
+        clearPlaylistFilter()
         tableView.reloadData()
         updateEmptyState()
+        refreshPlaylistActionStates()
         updateNowPlaying(title: "Ready", detail: "")
         metadataRequestID += 1
         metadataTextView.stringValue = "Select a media item to inspect it before playback."
         savePlaylistState()
+        showHUD("Playlist cleared")
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -662,6 +773,26 @@ final class PlayerViewController: NSViewController {
         applyVideoAdjustments(showHUD: false)
     }
 
+    @objc private func playlistSearchChanged(_ sender: NSSearchField) {
+        playlistFilter = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        tableView.reloadData()
+        restoreVisiblePlaylistSelection()
+        updateMetadataForSelection()
+        refreshPlaylistActionStates()
+    }
+
+    @objc private func playlistSortChanged(_ sender: NSPopUpButton) {
+        playlistSortMode = PlaylistSortMode(title: sender.selectedItem?.title) ?? .currentOrder
+        sortPlaylistPreservingCurrentItem()
+        tableView.reloadData()
+        restoreVisiblePlaylistSelection()
+        updateMetadataForSelection()
+        refreshPlaylistActionStates()
+        stateStore.savePlaylistSortMode(playlistSortMode.rawValue)
+        savePlaylistState()
+        showHUD("Sorted by \(playlistSortMode.shortTitle)")
+    }
+
     private func buildInterface(in rootView: NSView) {
         let splitView = NSSplitView()
         splitView.translatesAutoresizingMaskIntoConstraints = false
@@ -703,13 +834,35 @@ final class PlayerViewController: NSViewController {
         title.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let openButton = iconButton(systemName: "plus", description: "Add media", action: #selector(openFromToolbar(_:)))
+        let removeButton = iconButton(systemName: "minus", description: "Remove selected from playlist", action: #selector(removeSelectedPlaylistItems(_:)))
         let clearButton = iconButton(systemName: "trash", description: "Clear playlist", action: #selector(clearPlaylist(_:)))
         let hideSidebarButton = iconButton(systemName: "sidebar.left", description: "Hide sidebar", action: #selector(toggleSidebar(_:)))
+        removePlaylistButton = removeButton
+        clearPlaylistButton = clearButton
 
         header.addArrangedSubview(title)
         header.addArrangedSubview(openButton)
+        header.addArrangedSubview(removeButton)
         header.addArrangedSubview(clearButton)
         header.addArrangedSubview(hideSidebarButton)
+
+        playlistSearchField.translatesAutoresizingMaskIntoConstraints = false
+        playlistSearchField.placeholderString = "Search playlist"
+        playlistSearchField.sendsWholeSearchString = false
+        playlistSearchField.sendsSearchStringImmediately = true
+        playlistSearchField.target = self
+        playlistSearchField.action = #selector(playlistSearchChanged(_:))
+        playlistSearchField.setAccessibilityLabel("Search playlist")
+        playlistSearchField.setAccessibilityHelp("Filter the playlist by title, extension, path, or stream URL.")
+
+        playlistSortPopup.translatesAutoresizingMaskIntoConstraints = false
+        playlistSortPopup.addItems(withTitles: PlaylistSortMode.allCases.map(\.title))
+        playlistSortPopup.selectItem(withTitle: playlistSortMode.title)
+        playlistSortPopup.target = self
+        playlistSortPopup.action = #selector(playlistSortChanged(_:))
+        playlistSortPopup.toolTip = "Sort playlist"
+        playlistSortPopup.setAccessibilityLabel("Sort playlist")
+        playlistSortPopup.setAccessibilityHelp("Sort the playlist by current order, title, media type, or location.")
 
         tableView.headerView = nil
         tableView.delegate = self
@@ -717,8 +870,13 @@ final class PlayerViewController: NSViewController {
         tableView.rowHeight = 54
         tableView.style = .sourceList
         tableView.allowsEmptySelection = true
+        tableView.allowsMultipleSelection = true
         tableView.target = self
         tableView.doubleAction = #selector(tableViewDoubleClicked(_:))
+        tableView.registerForDraggedTypes([.videoPlayerPlaylistRows])
+        tableView.setDraggingSourceOperationMask(.move, forLocal: true)
+        tableView.setAccessibilityLabel("Playlist")
+        tableView.setAccessibilityHelp("Select media items to inspect, remove, or drag reorder; double-click to start playback.")
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("media"))
         column.resizingMask = .autoresizingMask
@@ -745,11 +903,15 @@ final class PlayerViewController: NSViewController {
         metadataTextView.textColor = .secondaryLabelColor
         metadataTextView.maximumNumberOfLines = 18
         metadataTextView.lineBreakMode = .byTruncatingMiddle
+        metadataTextView.setAccessibilityLabel("Media inspector")
+        metadataTextView.setAccessibilityHelp("Shows metadata for the selected media before playback.")
 
         metadataPanel.addSubview(metadataTitle)
         metadataPanel.addSubview(metadataTextView)
 
         container.addSubview(header)
+        container.addSubview(playlistSearchField)
+        container.addSubview(playlistSortPopup)
         container.addSubview(scrollView)
         container.addSubview(metadataPanel)
 
@@ -758,9 +920,17 @@ final class PlayerViewController: NSViewController {
             header.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             header.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
 
+            playlistSearchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            playlistSearchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            playlistSearchField.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
+
+            playlistSortPopup.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            playlistSortPopup.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            playlistSortPopup.topAnchor.constraint(equalTo: playlistSearchField.bottomAnchor, constant: 8),
+
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            scrollView.topAnchor.constraint(equalTo: playlistSortPopup.bottomAnchor, constant: 10),
             scrollView.bottomAnchor.constraint(equalTo: metadataPanel.topAnchor),
 
             metadataPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -793,16 +963,43 @@ final class PlayerViewController: NSViewController {
         playerView.videoGravity = .resizeAspect
         playerView.wantsLayer = true
         playerView.layer?.backgroundColor = NSColor.black.cgColor
+        playerView.setAccessibilityLabel("Video player")
 
         vlcVideoSurface.translatesAutoresizingMaskIntoConstraints = false
         vlcVideoSurface.wantsLayer = true
         vlcVideoSurface.layer?.backgroundColor = NSColor.black.cgColor
         vlcVideoSurface.isHidden = true
+        vlcVideoSurface.setAccessibilityLabel("Video playback surface")
 
-        emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateContainer.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateContainer.orientation = .vertical
+        emptyStateContainer.alignment = .centerX
+        emptyStateContainer.spacing = 12
+        emptyStateContainer.setAccessibilityLabel("Empty player state")
+
         emptyStateLabel.font = .systemFont(ofSize: 21, weight: .medium)
         emptyStateLabel.textColor = .secondaryLabelColor
         emptyStateLabel.alignment = .center
+        emptyStateLabel.maximumNumberOfLines = 2
+        emptyStateLabel.setAccessibilityLabel("Drop media files here")
+
+        emptyStateSubtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        emptyStateSubtitleLabel.textColor = .tertiaryLabelColor
+        emptyStateSubtitleLabel.alignment = .center
+        emptyStateSubtitleLabel.maximumNumberOfLines = 2
+        emptyStateSubtitleLabel.lineBreakMode = .byWordWrapping
+        emptyStateSubtitleLabel.setAccessibilityLabel("Open a local file, add a folder, or paste a public stream URL.")
+
+        configureEmptyStateButton(emptyStateOpenButton, action: #selector(openFromToolbar(_:)))
+        configureEmptyStateButton(emptyStateStreamButton, action: #selector(openNetworkStreamDialog(_:)))
+        let emptyStateActions = NSStackView(views: [emptyStateOpenButton, emptyStateStreamButton])
+        emptyStateActions.orientation = .horizontal
+        emptyStateActions.alignment = .centerY
+        emptyStateActions.spacing = 10
+
+        emptyStateContainer.addArrangedSubview(emptyStateLabel)
+        emptyStateContainer.addArrangedSubview(emptyStateSubtitleLabel)
+        emptyStateContainer.addArrangedSubview(emptyStateActions)
 
         hudLabel.translatesAutoresizingMaskIntoConstraints = false
         hudLabel.alignment = .center
@@ -817,13 +1014,14 @@ final class PlayerViewController: NSViewController {
         hudLabel.wantsLayer = true
         hudLabel.layer?.cornerRadius = 8
         hudLabel.layer?.masksToBounds = true
+        hudLabel.setAccessibilityLabel("Playback status")
 
         let controls = makeControls()
         controls.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(playerView)
         container.addSubview(vlcVideoSurface)
-        container.addSubview(emptyStateLabel)
+        container.addSubview(emptyStateContainer)
         container.addSubview(hudLabel)
         container.addSubview(controls)
 
@@ -838,10 +1036,10 @@ final class PlayerViewController: NSViewController {
             vlcVideoSurface.topAnchor.constraint(equalTo: playerView.topAnchor),
             vlcVideoSurface.bottomAnchor.constraint(equalTo: playerView.bottomAnchor),
 
-            emptyStateLabel.centerXAnchor.constraint(equalTo: playerView.centerXAnchor),
-            emptyStateLabel.centerYAnchor.constraint(equalTo: playerView.centerYAnchor),
-            emptyStateLabel.leadingAnchor.constraint(greaterThanOrEqualTo: playerView.leadingAnchor, constant: 24),
-            emptyStateLabel.trailingAnchor.constraint(lessThanOrEqualTo: playerView.trailingAnchor, constant: -24),
+            emptyStateContainer.centerXAnchor.constraint(equalTo: playerView.centerXAnchor),
+            emptyStateContainer.centerYAnchor.constraint(equalTo: playerView.centerYAnchor),
+            emptyStateContainer.leadingAnchor.constraint(greaterThanOrEqualTo: playerView.leadingAnchor, constant: 24),
+            emptyStateContainer.trailingAnchor.constraint(lessThanOrEqualTo: playerView.trailingAnchor, constant: -24),
 
             hudLabel.centerXAnchor.constraint(equalTo: playerView.centerXAnchor),
             hudLabel.centerYAnchor.constraint(equalTo: playerView.centerYAnchor),
@@ -875,6 +1073,8 @@ final class PlayerViewController: NSViewController {
         seekSlider.action = #selector(sliderChanged(_:))
         seekSlider.isContinuous = true
         seekSlider.sendAction(on: [.leftMouseDragged, .leftMouseUp])
+        seekSlider.setAccessibilityLabel("Playback position")
+        seekSlider.setAccessibilityHelp("Drag to seek through the current media.")
 
         currentTimeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         durationLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
@@ -897,6 +1097,8 @@ final class PlayerViewController: NSViewController {
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause(_:))
         playPauseButton.toolTip = "Play or pause"
+        playPauseButton.setAccessibilityLabel("Play")
+        playPauseButton.setAccessibilityHelp("Start or pause playback.")
         playPauseButton.contentTintColor = .white
         playPauseButton.appearance = NSAppearance(named: .darkAqua)
         playPauseButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
@@ -908,6 +1110,8 @@ final class PlayerViewController: NSViewController {
         sidebarButton.target = self
         sidebarButton.action = #selector(toggleSidebar(_:))
         sidebarButton.toolTip = "Hide sidebar"
+        sidebarButton.setAccessibilityLabel("Hide sidebar")
+        sidebarButton.setAccessibilityHelp("Show or hide the playlist and inspector sidebar.")
         sidebarButton.contentTintColor = .white
         sidebarButton.appearance = NSAppearance(named: .darkAqua)
         sidebarButton.translatesAutoresizingMaskIntoConstraints = false
@@ -919,11 +1123,15 @@ final class PlayerViewController: NSViewController {
         speedPopup.target = self
         speedPopup.action = #selector(speedChanged(_:))
         speedPopup.toolTip = "Playback speed"
+        speedPopup.setAccessibilityLabel("Playback speed")
+        speedPopup.setAccessibilityHelp("Choose a playback speed.")
         speedPopup.widthAnchor.constraint(equalToConstant: 78).isActive = true
 
         volumeSlider.target = self
         volumeSlider.action = #selector(volumeChanged(_:))
         volumeSlider.toolTip = "Volume boost"
+        volumeSlider.setAccessibilityLabel("Volume")
+        volumeSlider.setAccessibilityHelp("Adjust volume from 0 to 200 percent.")
         volumeSlider.widthAnchor.constraint(equalToConstant: 150).isActive = true
         volumeSlider.doubleValue = defaultVolume
         setVolume(defaultVolume, persist: false)
@@ -936,6 +1144,7 @@ final class PlayerViewController: NSViewController {
         let volumeIcon = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Volume") ?? NSImage())
         volumeIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         volumeIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
+        volumeIcon.setAccessibilityLabel("Volume")
 
         let flexibleGap = NSView()
         flexibleGap.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -981,6 +1190,8 @@ final class PlayerViewController: NSViewController {
         audioTrackPopup.target = self
         audioTrackPopup.action = #selector(audioTrackChanged(_:))
         audioTrackPopup.toolTip = "Audio track"
+        audioTrackPopup.setAccessibilityLabel("Audio track")
+        audioTrackPopup.setAccessibilityHelp("Choose an available audio track.")
         audioTrackPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         audioPresetPopup.addItems(withTitles: AudioPreset.allCases.map(\.rawValue))
@@ -988,6 +1199,8 @@ final class PlayerViewController: NSViewController {
         audioPresetPopup.target = self
         audioPresetPopup.action = #selector(audioPresetChanged(_:))
         audioPresetPopup.toolTip = "Audio preset"
+        audioPresetPopup.setAccessibilityLabel("Audio preset")
+        audioPresetPopup.setAccessibilityHelp("Choose an audio equalizer preset.")
         audioPresetPopup.widthAnchor.constraint(equalToConstant: 132).isActive = true
 
         audioDelayStepper.minValue = -30
@@ -996,16 +1209,21 @@ final class PlayerViewController: NSViewController {
         audioDelayStepper.target = self
         audioDelayStepper.action = #selector(audioDelayChanged(_:))
         audioDelayStepper.toolTip = "Audio delay"
+        audioDelayStepper.setAccessibilityLabel("Audio delay")
+        audioDelayStepper.setAccessibilityHelp("Move audio earlier or later in 0.1 second increments.")
         audioDelayStepper.widthAnchor.constraint(equalToConstant: 52).isActive = true
 
         audioDelayLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         audioDelayLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         audioDelayLabel.alignment = .right
         audioDelayLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        audioDelayLabel.setAccessibilityLabel("Current audio delay")
 
         subtitleTrackPopup.target = self
         subtitleTrackPopup.action = #selector(subtitleTrackChanged(_:))
         subtitleTrackPopup.toolTip = "Subtitle track"
+        subtitleTrackPopup.setAccessibilityLabel("Subtitle track")
+        subtitleTrackPopup.setAccessibilityHelp("Choose an available subtitle track.")
         subtitleTrackPopup.widthAnchor.constraint(equalToConstant: 230).isActive = true
 
         subtitleDelayStepper.minValue = -30
@@ -1014,39 +1232,57 @@ final class PlayerViewController: NSViewController {
         subtitleDelayStepper.target = self
         subtitleDelayStepper.action = #selector(subtitleDelayChanged(_:))
         subtitleDelayStepper.toolTip = "Subtitle delay"
+        subtitleDelayStepper.setAccessibilityLabel("Subtitle delay")
+        subtitleDelayStepper.setAccessibilityHelp("Move subtitles earlier or later in 0.1 second increments.")
         subtitleDelayStepper.widthAnchor.constraint(equalToConstant: 52).isActive = true
 
         subtitleDelayLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         subtitleDelayLabel.textColor = NSColor(calibratedWhite: 0.86, alpha: 1)
         subtitleDelayLabel.alignment = .right
         subtitleDelayLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        subtitleDelayLabel.setAccessibilityLabel("Current subtitle delay")
 
         let audioIcon = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: "Audio") ?? NSImage())
         audioIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         audioIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
+        audioIcon.setAccessibilityLabel("Audio controls")
         let subtitleIcon = NSImageView(image: NSImage(systemSymbolName: "captions.bubble", accessibilityDescription: "Subtitles") ?? NSImage())
         subtitleIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         subtitleIcon.contentTintColor = NSColor(calibratedWhite: 0.88, alpha: 1)
+        subtitleIcon.setAccessibilityLabel("Subtitle controls")
         let loadSubtitleButton = iconButton(systemName: "text.badge.plus", description: "Load subtitles", action: #selector(openSubtitlePanel(_:)), controlBarStyle: true)
 
-        let gap = NSView()
-        gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let stack = NSStackView(views: [
+        let audioGap = NSView()
+        audioGap.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let audioRow = NSStackView(views: [
             audioIcon,
             audioTrackPopup,
             audioPresetPopup,
             audioDelayStepper,
             audioDelayLabel,
+            audioGap
+        ])
+        audioRow.orientation = .horizontal
+        audioRow.alignment = .centerY
+        audioRow.spacing = 8
+
+        let subtitleGap = NSView()
+        subtitleGap.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let subtitleRow = NSStackView(views: [
             subtitleIcon,
             subtitleTrackPopup,
             loadSubtitleButton,
             subtitleDelayStepper,
             subtitleDelayLabel,
-            gap
+            subtitleGap
         ])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
+        subtitleRow.orientation = .horizontal
+        subtitleRow.alignment = .centerY
+        subtitleRow.spacing = 8
+
+        let stack = NSStackView(views: [audioRow, subtitleRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
         stack.spacing = 8
         resetTrackMenus()
         return stack
@@ -1110,6 +1346,8 @@ final class PlayerViewController: NSViewController {
         }
 
         switch event.keyCode {
+        case 51, 117:
+            removeSelectedPlaylistItems(nil)
         case 49:
             togglePlayPause(nil)
         case 123:
@@ -1157,6 +1395,14 @@ final class PlayerViewController: NSViewController {
     }
 
     private func addMedia(from urls: [URL], replacePlaylist: Bool, autoplay: Bool) {
+        if urls.count == 1, let playlistURL = urls.first, isPlaylistFile(playlistURL) {
+            showHUD("Importing playlist")
+            Task { [weak self] in
+                await self?.importPlaylist(from: playlistURL, replacePlaylist: replacePlaylist)
+            }
+            return
+        }
+
         let subtitleURLs = urls.filter(isSubtitleFile)
         let items = urls
             .flatMap(mediaURLs(from:))
@@ -1181,6 +1427,7 @@ final class PlayerViewController: NSViewController {
     }
 
     private func addMediaItems(_ items: [MediaItem], replacePlaylist: Bool, autoplay: Bool) {
+        let activeItem = currentItem
         if replacePlaylist {
             stopPlayback()
             playlist = items
@@ -1189,15 +1436,18 @@ final class PlayerViewController: NSViewController {
             playlist.append(contentsOf: items)
         }
 
+        sortPlaylistPreserving(item: activeItem)
+        let targetIndex = items.first.flatMap { playlist.firstIndex(of: $0) }
+        clearPlaylistFilter()
         tableView.reloadData()
         updateEmptyState()
+        refreshPlaylistActionStates()
         savePlaylistState()
 
-        if currentIndex == nil, autoplay {
-            playItem(at: replacePlaylist ? 0 : playlist.count - items.count)
-        } else if currentIndex == nil {
-            let index = replacePlaylist ? 0 : playlist.count - items.count
-            selectItemForInspection(at: index)
+        if currentIndex == nil, autoplay, let targetIndex {
+            playItem(at: targetIndex)
+        } else if currentIndex == nil, let targetIndex {
+            selectItemForInspection(at: targetIndex)
         }
     }
 
@@ -1249,33 +1499,178 @@ final class PlayerViewController: NSViewController {
         url.isFileURL && subtitleExtensions.contains(url.pathExtension.lowercased())
     }
 
+    private func isPlaylistFile(_ url: URL) -> Bool {
+        url.isFileURL && ["m3u", "m3u8"].contains(url.pathExtension.lowercased())
+    }
+
     private func playItem(at index: Int) {
         saveCurrentPosition()
         guard playlist.indices.contains(index) else { return }
+        playbackRequestID += 1
+        let requestID = playbackRequestID
+        nativePlaybackInspectionTask?.cancel()
         currentIndex = index
         savePlaylistState()
-        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        tableView.scrollRowToVisible(index)
+        restoreVisiblePlaylistSelection()
 
         let item = playlist[index]
+        AppLogger.info("Playback requested requestID=\(requestID) title=\(item.title) url=\(item.url.absoluteString)", flush: true)
         stateStore.addRecentMedia(item)
         updateMetadata(for: item)
         updateNowPlaying(title: item.title, detail: item.subtitle)
         let resumeTime = promptedResumeTime(for: item)
 
-        if shouldUseVLC(for: item) {
-            playWithVLC(item, resumeTime: resumeTime)
-        } else if shouldUseMPV(for: item) {
-            playWithMPV(item, resumeTime: resumeTime)
-        } else {
-            playNatively(item, fallbackToMPV: true, resumeTime: resumeTime)
+        if item.isNetworkStream {
+            showHUD("Checking stream")
+            Task { [weak self] in
+                await self?.startNetworkPlaybackAfterValidation(item, at: index, resumeTime: resumeTime)
+            }
+            refreshControls()
+            return
         }
 
+        startLocalPlaybackAfterInspection(item, at: index, resumeTime: resumeTime, requestID: requestID)
+    }
+
+    @MainActor
+    private func startNetworkPlaybackAfterValidation(_ item: MediaItem, at index: Int, resumeTime: Double?) async {
+        let stream = await NetworkStreamValidator.validatedStream(
+            from: item.url.absoluteString,
+            allowPrivateNetworkHosts: stateStore.privateNetworkStreamsEnabled()
+        )
+
+        guard playlist.indices.contains(index),
+              playlist[index] == item,
+              currentIndex == index
+        else {
+            return
+        }
+
+        guard let stream else {
+            currentEngine = .none
+            engineLabel.stringValue = "Stream blocked because its URL, DNS result, or private-network status is no longer trusted."
+            showHUD("Stream blocked")
+            refreshControls()
+            return
+        }
+
+        guard !networkStreamResolutionChanged(stream) else {
+            currentEngine = .none
+            engineLabel.stringValue = "Stream blocked because its DNS result changed since it was added."
+            showHUD("Stream DNS changed")
+            refreshControls()
+            return
+        }
+
+        rememberValidatedNetworkStream(stream)
+        startPlayback(item, resumeTime: resumeTime)
         refreshControls()
     }
 
-    private func playNatively(_ item: MediaItem, fallbackToMPV: Bool, resumeTime: Double?) {
+    private func startLocalPlaybackAfterInspection(
+        _ item: MediaItem,
+        at index: Int,
+        resumeTime: Double?,
+        requestID: Int
+    ) {
+        let nativePlaybackExtensions = self.nativeExtensions
+
+        nativePlaybackInspectionTask = Task { [weak self] in
+            AppLogger.info("Native playback inspection started requestID=\(requestID) title=\(item.title)", flush: true)
+            let assessment = await NativePlaybackPolicy.assessment(
+                for: item,
+                nativeExtensions: nativePlaybackExtensions
+            )
+            AppLogger.info("Native playback inspection finished requestID=\(requestID) routing=\(assessment.routing) codecs=\(assessment.detectedVideoCodecs.sorted().joined(separator: ",")) reason=\(assessment.reason ?? "none")", flush: true)
+
+            await MainActor.run {
+                guard let self,
+                      self.playbackRequestID == requestID,
+                      self.currentIndex == index,
+                      self.playlist.indices.contains(index),
+                      self.playlist[index] == item
+                else {
+                    return
+                }
+
+                self.startPlayback(item, resumeTime: resumeTime, nativeAssessment: assessment)
+                self.refreshControls()
+            }
+        }
+    }
+
+    private func startPlayback(
+        _ item: MediaItem,
+        resumeTime: Double?,
+        nativeAssessment: NativePlaybackAssessment = .native
+    ) {
+        AppLogger.info("Start playback routing title=\(item.title) routing=\(nativeAssessment.routing) externalAvailable=\(AppSecurityPolicy.externalMediaEnginesAvailable) externalEnabled=\(stateStore.externalMediaEnginesEnabled())", flush: true)
+        if nativeAssessment.requiresExternalEngine,
+           promptToEnableExternalEnginesIfNeeded(for: item, resumeTime: resumeTime, assessment: nativeAssessment) {
+            return
+        }
+
+        if shouldUseVLC(for: item, nativeAssessment: nativeAssessment) {
+            playWithVLC(item, resumeTime: resumeTime)
+        } else if shouldUseMPV(for: item, nativeAssessment: nativeAssessment) {
+            playWithMPV(item, resumeTime: resumeTime)
+        } else if nativeAssessment.requiresExternalEngine {
+            handleUnsupportedNativePlayback(for: item, assessment: nativeAssessment)
+        } else {
+            playNatively(
+                item,
+                fallbackToMPV: true,
+                resumeTime: resumeTime,
+                nativeAssessment: nativeAssessment
+            )
+        }
+    }
+
+    private func promptToEnableExternalEnginesIfNeeded(
+        for item: MediaItem,
+        resumeTime: Double?,
+        assessment: NativePlaybackAssessment
+    ) -> Bool {
+        guard AppSecurityPolicy.externalMediaEnginesAvailable,
+              !stateStore.externalMediaEnginesEnabled()
+        else {
+            return false
+        }
+
+        AppLogger.info("Prompting user to enable external engines for title=\(item.title) reason=\(assessment.reason ?? "none")", flush: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Enable trusted VLC/mpv playback?"
+        alert.informativeText = """
+        \(assessment.reason ?? "This file needs a broader video codec engine.")
+
+        Video Player will only use separately installed media engines that pass code-signature, Team ID, and Gatekeeper checks.
+        """
+        alert.addButton(withTitle: "Enable and Play")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            stateStore.setExternalMediaEnginesEnabled(true)
+            AppLogger.info("User enabled external engines from playback prompt for title=\(item.title)", flush: true)
+            showHUD("External engines enabled")
+            startPlayback(item, resumeTime: resumeTime, nativeAssessment: assessment)
+        } else {
+            AppLogger.info("User canceled external-engine playback prompt for title=\(item.title)", flush: true)
+            handleUnsupportedNativePlayback(for: item, assessment: assessment)
+        }
+
+        return true
+    }
+
+    private func playNatively(
+        _ item: MediaItem,
+        fallbackToMPV: Bool,
+        resumeTime: Double?,
+        nativeAssessment: NativePlaybackAssessment
+    ) {
+        AppLogger.info("Starting native AVFoundation playback title=\(item.title) reason=\(nativeAssessment.reason ?? "native")", flush: true)
         codecTimer?.invalidate()
+        nativeVideoWatchdogTask?.cancel()
         vlcBridge.stop()
         mpvBridge.stop()
         currentEngine = .native
@@ -1288,6 +1683,7 @@ final class PlayerViewController: NSViewController {
         itemStatusObservation = avItem.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
             guard observedItem.status == .failed else { return }
             DispatchQueue.main.async {
+                AppLogger.error("AVFoundation item failed title=\(item.title) error=\(observedItem.error?.localizedDescription ?? "unknown")", flush: true)
                 self?.handleNativeFailure(for: item, fallbackToMPV: fallbackToMPV, error: observedItem.error)
             }
         }
@@ -1299,15 +1695,18 @@ final class PlayerViewController: NSViewController {
             showHUD("Resumed at \(formatTime(resumeTime))")
         }
         avPlayer.play()
-        engineLabel.stringValue = "Playing in-app with AVFoundation"
+        engineLabel.stringValue = nativeAssessment.reason ?? "Playing in-app with AVFoundation"
+        scheduleNativeVideoWatchdog(for: item, requestID: playbackRequestID, fallbackToMPV: fallbackToMPV)
     }
 
-    private func playWithVLC(_ item: MediaItem, resumeTime: Double?) {
+    private func playWithVLC(_ item: MediaItem, resumeTime: Double?, fallbackToMPV: Bool = true) {
+        AppLogger.info("Starting VLC playback title=\(item.title) fallbackToMPV=\(fallbackToMPV)", flush: true)
         avPlayer.pause()
         avPlayer.replaceCurrentItem(with: nil)
         mpvBridge.stop()
         itemStatusObservation = nil
         codecTimer?.invalidate()
+        nativeVideoWatchdogTask?.cancel()
         currentEngine = .vlc
         seekSlider.isEnabled = true
         playerView.isHidden = true
@@ -1322,6 +1721,7 @@ final class PlayerViewController: NSViewController {
                 speed: playbackRateFromSelection()
             )
             engineLabel.stringValue = "Playing in-app with VLC codec engine"
+            AppLogger.info("VLC playback started title=\(item.title)", flush: true)
             startCodecTimer()
             applyResumeTime(resumeTime)
             if currentAudioPreset != .flat {
@@ -1333,6 +1733,14 @@ final class PlayerViewController: NSViewController {
             autoLoadSidecarSubtitle(for: item)
             scheduleTrackMenuRefresh()
         } catch {
+            AppLogger.error("VLC playback failed title=\(item.title) error=\(error.localizedDescription)", flush: true)
+            vlcBridge.stop()
+            if fallbackToMPV, mpvBridge.isAvailable {
+                AppLogger.info("Falling back from VLC to mpv title=\(item.title)", flush: true)
+                playWithMPV(item, resumeTime: resumeTime)
+                return
+            }
+
             currentEngine = .none
             vlcVideoSurface.isHidden = true
             playerView.isHidden = false
@@ -1341,11 +1749,13 @@ final class PlayerViewController: NSViewController {
     }
 
     private func playWithMPV(_ item: MediaItem, resumeTime: Double?) {
+        AppLogger.info("Starting mpv playback title=\(item.title)", flush: true)
         avPlayer.pause()
         avPlayer.replaceCurrentItem(with: nil)
         vlcBridge.stop()
         itemStatusObservation = nil
         codecTimer?.invalidate()
+        nativeVideoWatchdogTask?.cancel()
         currentEngine = .mpv
         seekSlider.doubleValue = 0
         seekSlider.isEnabled = false
@@ -1362,6 +1772,7 @@ final class PlayerViewController: NSViewController {
                 speed: playbackRateFromSelection()
             ) { [weak self] in
                 guard let self, self.currentEngine == .mpv else { return }
+                AppLogger.info("mpv process exited title=\(item.title)", flush: true)
                 self.currentEngine = .none
                 self.refreshControls()
             }
@@ -1372,22 +1783,100 @@ final class PlayerViewController: NSViewController {
                 showHUD("Resumed at \(formatTime(resumeTime))")
             }
             engineLabel.stringValue = "Playing with mpv for broad codec support"
+            AppLogger.info("mpv playback launched title=\(item.title)", flush: true)
         } catch {
             currentEngine = .none
+            AppLogger.error("mpv playback failed title=\(item.title) error=\(error.localizedDescription)", flush: true)
             engineLabel.stringValue = error.localizedDescription
             playerView.isHidden = false
         }
     }
 
-    private func shouldUseVLC(for item: MediaItem) -> Bool {
+    private func shouldUseVLC(for _: MediaItem, nativeAssessment _: NativePlaybackAssessment) -> Bool {
         vlcBridge.isAvailable
     }
 
-    private func shouldUseMPV(for item: MediaItem) -> Bool {
-        (item.isNetworkStream || !nativeExtensions.contains(item.fileExtension)) && mpvBridge.isAvailable
+    private func shouldUseMPV(for item: MediaItem, nativeAssessment: NativePlaybackAssessment) -> Bool {
+        (item.isNetworkStream || !nativeExtensions.contains(item.fileExtension) || nativeAssessment.prefersExternalEngine)
+            && mpvBridge.isAvailable
+    }
+
+    private func handleUnsupportedNativePlayback(for item: MediaItem, assessment: NativePlaybackAssessment) {
+        AppLogger.warning("Unsupported native playback title=\(item.title) reason=\(assessment.reason ?? "unknown")", flush: true)
+        avPlayer.pause()
+        avPlayer.replaceCurrentItem(with: nil)
+        vlcBridge.stop()
+        mpvBridge.stop()
+        itemStatusObservation = nil
+        codecTimer?.invalidate()
+        nativeVideoWatchdogTask?.cancel()
+        currentEngine = .none
+        seekSlider.isEnabled = false
+        playerView.isHidden = false
+        vlcVideoSurface.isHidden = true
+        resetTrackMenus()
+
+        let reason = assessment.reason ?? "This video codec is not available through Apple-native playback."
+        engineLabel.stringValue = "\(reason) Enable a trusted VLC/mpv engine in an advanced build to play it."
+        showHUD("Video codec needs VLC/mpv")
+        refreshControls()
+    }
+
+    private func scheduleNativeVideoWatchdog(for item: MediaItem, requestID: Int, fallbackToMPV: Bool) {
+        nativeVideoWatchdogTask?.cancel()
+        AppLogger.debug("Scheduling native video watchdog requestID=\(requestID) title=\(item.title)")
+        nativeVideoWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+
+            let hasVideoTrack = await NativePlaybackPolicy.hasVideoTrack(item)
+
+            await MainActor.run {
+                guard let self,
+                      self.playbackRequestID == requestID,
+                      self.currentEngine == .native,
+                      hasVideoTrack
+                else {
+                    return
+                }
+
+                let presentationSize = self.avPlayer.currentItem?.presentationSize ?? .zero
+                guard presentationSize.width <= 1 || presentationSize.height <= 1 else {
+                    AppLogger.debug("Native video watchdog passed requestID=\(requestID) title=\(item.title) presentationSize=\(presentationSize.width)x\(presentationSize.height)")
+                    return
+                }
+
+                AppLogger.warning("Native video watchdog detected audio-only playback requestID=\(requestID) title=\(item.title)", flush: true)
+                self.handleNativeAudioOnlyPlayback(for: item, fallbackToMPV: fallbackToMPV)
+            }
+        }
+    }
+
+    private func handleNativeAudioOnlyPlayback(for item: MediaItem, fallbackToMPV: Bool) {
+        AppLogger.warning("Handling native audio-only playback title=\(item.title) fallbackToMPV=\(fallbackToMPV)", flush: true)
+        avPlayer.pause()
+        avPlayer.replaceCurrentItem(with: nil)
+        let assessment = NativePlaybackAssessment(
+            routing: .requiresExternal,
+            reason: "macOS started the audio track but did not produce a video frame. This file likely needs a trusted VLC/mpv engine for its video codec.",
+            detectedVideoCodecs: []
+        )
+
+        if fallbackToMPV,
+           promptToEnableExternalEnginesIfNeeded(for: item, resumeTime: nil, assessment: assessment) {
+            return
+        }
+
+        handleNativeFailure(
+            for: item,
+            fallbackToMPV: fallbackToMPV,
+            error: NativePlaybackError.audioOnlyVideo
+        )
+        showHUD("Video codec needs VLC/mpv")
     }
 
     private func handleNativeFailure(for item: MediaItem, fallbackToMPV: Bool, error: Error?) {
+        AppLogger.error("Handling native playback failure title=\(item.title) fallbackToMPV=\(fallbackToMPV) error=\(error?.localizedDescription ?? "unknown")", flush: true)
         if fallbackToMPV, vlcBridge.isAvailable {
             playWithVLC(item, resumeTime: nil)
             return
@@ -1406,9 +1895,12 @@ final class PlayerViewController: NSViewController {
 
     private func stopPlayback() {
         saveCurrentPosition()
+        playbackRequestID += 1
+        nativePlaybackInspectionTask?.cancel()
         avPlayer.pause()
         avPlayer.replaceCurrentItem(with: nil)
         codecTimer?.invalidate()
+        nativeVideoWatchdogTask?.cancel()
         vlcBridge.stop()
         mpvBridge.stop()
         currentEngine = .none
@@ -1546,6 +2038,8 @@ final class PlayerViewController: NSViewController {
         slider.identifier = NSUserInterfaceItemIdentifier(key.rawValue)
         slider.isContinuous = true
         slider.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        slider.setAccessibilityLabel(key.title)
+        slider.setAccessibilityHelp("Adjust video \(key.title.lowercased()).")
         videoAdjustmentSliders[key] = slider
 
         let stack = NSStackView(views: [label, slider])
@@ -1701,8 +2195,10 @@ final class PlayerViewController: NSViewController {
             systemSymbolName: isPlaying ? "pause.fill" : "play.fill",
             accessibilityDescription: isPlaying ? "Pause" : "Play"
         )
+        playPauseButton.setAccessibilityLabel(isPlaying ? "Pause" : "Play")
         updateSidebarButton(sidebarHidden: sidebarView?.isHidden == true)
         updateEmptyState()
+        refreshPlaylistActionStates()
     }
 
     private func updateSidebarButton(sidebarHidden: Bool) {
@@ -1711,10 +2207,23 @@ final class PlayerViewController: NSViewController {
             accessibilityDescription: sidebarHidden ? "Show sidebar" : "Hide sidebar"
         )
         sidebarButton.toolTip = sidebarHidden ? "Show sidebar" : "Hide sidebar"
+        sidebarButton.setAccessibilityLabel(sidebarHidden ? "Show sidebar" : "Hide sidebar")
     }
 
     private func updateEmptyState() {
-        emptyStateLabel.isHidden = !playlist.isEmpty || currentEngine != .none
+        emptyStateContainer.isHidden = !playlist.isEmpty || currentEngine != .none
+    }
+
+    private func configureEmptyStateButton(_ button: NSButton, action: Selector) {
+        button.target = self
+        button.action = action
+        button.bezelStyle = .rounded
+        button.controlSize = .large
+        button.font = .systemFont(ofSize: 13, weight: .medium)
+        button.toolTip = button.title
+        button.setAccessibilityLabel(button.title)
+        button.setAccessibilityHelp(button.title)
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 118).isActive = true
     }
 
     private func iconButton(
@@ -1729,6 +2238,8 @@ final class PlayerViewController: NSViewController {
         button.target = self
         button.action = action
         button.toolTip = description
+        button.setAccessibilityLabel(description)
+        button.setAccessibilityHelp(description)
         if controlBarStyle {
             button.appearance = NSAppearance(named: .darkAqua)
             button.contentTintColor = .white
@@ -1873,21 +2384,28 @@ final class PlayerViewController: NSViewController {
             currentAudioPreset = preset
             audioPresetPopup.selectItem(withTitle: preset.rawValue)
         }
+        if let sortModeValue = stateStore.loadPlaylistSortMode(),
+           let sortMode = PlaylistSortMode(rawValue: sortModeValue) {
+            playlistSortMode = sortMode
+            playlistSortPopup.selectItem(withTitle: sortMode.title)
+        }
 
         let restored = stateStore.loadPlaylist()
         playlist = restored.0
-        if let index = restored.1, playlist.indices.contains(index) {
-            currentIndex = index
+        let restoredItem = restored.1.flatMap { playlist.indices.contains($0) ? playlist[$0] : nil }
+        sortPlaylistPreserving(item: restoredItem)
+        if let restoredItem {
+            currentIndex = playlist.firstIndex(of: restoredItem)
         }
 
         tableView.reloadData()
         if let currentIndex {
-            tableView.selectRowIndexes(IndexSet(integer: currentIndex), byExtendingSelection: false)
-            tableView.scrollRowToVisible(currentIndex)
+            restoreVisiblePlaylistSelection()
             let item = playlist[currentIndex]
             updateNowPlaying(title: item.title, detail: "Restored playlist")
             updateMetadata(for: item)
         }
+        refreshPlaylistActionStates()
     }
 
     private func savePlaylistState() {
@@ -1952,8 +2470,7 @@ final class PlayerViewController: NSViewController {
     private func selectItemForInspection(at index: Int) {
         guard playlist.indices.contains(index) else { return }
         currentIndex = index
-        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        tableView.scrollRowToVisible(index)
+        restoreVisiblePlaylistSelection()
         let item = playlist[index]
         updateMetadata(for: item)
         updateNowPlaying(title: item.title, detail: "Ready to play")
@@ -1962,12 +2479,16 @@ final class PlayerViewController: NSViewController {
 
     private func updateMetadataForSelection() {
         let row = tableView.selectedRow
-        guard playlist.indices.contains(row) else {
+        guard let playlistIndex = playlistIndex(forVisibleRow: row) else {
             metadataRequestID += 1
-            metadataTextView.stringValue = "Select a media item to inspect it before playback."
+            if !playlistFilter.isEmpty, !playlist.isEmpty, visiblePlaylistIndices.isEmpty {
+                metadataTextView.stringValue = "No playlist items match \"\(playlistFilter)\"."
+            } else {
+                metadataTextView.stringValue = "Select a media item to inspect it before playback."
+            }
             return
         }
-        updateMetadata(for: playlist[row])
+        updateMetadata(for: playlist[playlistIndex])
     }
 
     private func updateMetadata(for item: MediaItem) {
@@ -2012,6 +2533,276 @@ final class PlayerViewController: NSViewController {
         return playlist[currentIndex]
     }
 
+    private func rememberValidatedNetworkStream(_ stream: NetworkStreamValidator.ValidatedStream) {
+        guard stream.url.isFileURL == false else { return }
+        networkStreamResolutions[stream.url.absoluteString] = stream.resolvedAddresses
+    }
+
+    private func networkStreamResolutionChanged(_ stream: NetworkStreamValidator.ValidatedStream) -> Bool {
+        let currentAddresses = stream.resolvedAddresses
+        guard !currentAddresses.isEmpty,
+              let previousAddresses = networkStreamResolutions[stream.url.absoluteString],
+              !previousAddresses.isEmpty
+        else {
+            return false
+        }
+        return previousAddresses.isDisjoint(with: currentAddresses)
+    }
+
+    private var visiblePlaylistIndices: [Int] {
+        PlaylistWorkflow.visibleIndices(in: playlist, filter: playlistFilter)
+    }
+
+    private func playlistIndex(forVisibleRow row: Int) -> Int? {
+        let indices = visiblePlaylistIndices
+        guard indices.indices.contains(row) else { return nil }
+        return indices[row]
+    }
+
+    private func restoreVisiblePlaylistSelection() {
+        guard let currentIndex, let row = visiblePlaylistIndices.firstIndex(of: currentIndex) else {
+            tableView.deselectAll(nil)
+            return
+        }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+    }
+
+    private func selectedPlaylistIndices() -> [Int] {
+        tableView.selectedRowIndexes.compactMap(playlistIndex(forVisibleRow:)).sorted()
+    }
+
+    private func selectNearestPlaylistRow(afterRemovingVisibleRows removedRows: IndexSet) {
+        guard currentIndex == nil, !playlist.isEmpty, !visiblePlaylistIndices.isEmpty else {
+            restoreVisiblePlaylistSelection()
+            return
+        }
+
+        let candidateRow = min(removedRows.first ?? 0, visiblePlaylistIndices.count - 1)
+        guard let index = playlistIndex(forVisibleRow: candidateRow) else { return }
+        currentIndex = index
+        tableView.selectRowIndexes(IndexSet(integer: candidateRow), byExtendingSelection: false)
+        updateMetadata(for: playlist[index])
+        updateNowPlaying(title: playlist[index].title, detail: "Ready to play")
+    }
+
+    private func refreshPlaylistActionStates() {
+        removePlaylistButton?.isEnabled = !selectedPlaylistIndices().isEmpty
+        clearPlaylistButton?.isEnabled = !playlist.isEmpty
+    }
+
+    private var canReorderPlaylist: Bool {
+        playlistSortMode == .currentOrder && playlistFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func reorderPlaylistItems(at sourceIndexes: [Int], to proposedRow: Int) {
+        let activeItem = currentItem
+        let movingIndexes = Array(Set(sourceIndexes)).sorted()
+        guard !movingIndexes.isEmpty, movingIndexes.allSatisfy({ playlist.indices.contains($0) }) else { return }
+
+        let movingItems = movingIndexes.map { playlist[$0] }
+        playlist = PlaylistWorkflow.reordered(playlist, movingIndexes: movingIndexes, to: proposedRow)
+
+        if let activeItem {
+            currentIndex = playlist.firstIndex(of: activeItem)
+        }
+
+        tableView.reloadData()
+        let selectedRows = movingItems.compactMap { playlist.firstIndex(of: $0) }
+        var selectedRowIndexes = IndexSet()
+        selectedRows.forEach { selectedRowIndexes.insert($0) }
+        tableView.selectRowIndexes(selectedRowIndexes, byExtendingSelection: false)
+        if let firstRow = selectedRows.first {
+            tableView.scrollRowToVisible(firstRow)
+        }
+        savePlaylistState()
+        refreshPlaylistActionStates()
+        showHUD("Moved \(movingItems.count) item\(movingItems.count == 1 ? "" : "s")")
+    }
+
+    private func playlistIndexes(from pasteboard: NSPasteboard) -> [Int] {
+        let strings = pasteboard.pasteboardItems?.compactMap {
+            $0.string(forType: .videoPlayerPlaylistRows)
+        } ?? []
+
+        return Array(Set(strings.flatMap { value in
+            value.split(separator: ",").compactMap { Int($0) }
+        })).sorted()
+    }
+
+    private func clearPlaylistFilter() {
+        guard !playlistFilter.isEmpty || !playlistSearchField.stringValue.isEmpty else { return }
+        playlistFilter = ""
+        playlistSearchField.stringValue = ""
+    }
+
+    @MainActor
+    private func importPlaylist(from url: URL, replacePlaylist: Bool) async {
+        do {
+            let result = try await importedPlaylistItems(from: url)
+            guard !result.items.isEmpty else {
+                showPlaylistFileError(
+                    title: "No Supported Media Found",
+                    detail: result.issueSummary.isEmpty
+                        ? "The playlist did not contain supported local media files or allowed public stream URLs."
+                        : result.issueSummary
+                )
+                return
+            }
+
+            addMediaItems(result.items, replacePlaylist: replacePlaylist, autoplay: false)
+            let skippedText = result.skippedCount > 0 ? ", skipped \(result.skippedCount)" : ""
+            showHUD("Imported \(result.items.count)\(skippedText)")
+            if !result.issues.isEmpty {
+                showPlaylistFileError(
+                    title: "Playlist Imported with Skipped Entries",
+                    detail: result.issueSummary
+                )
+            }
+        } catch {
+            showPlaylistFileError(
+                title: "Could Not Import Playlist",
+                detail: "The playlist could not be read. \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func importedPlaylistItems(from playlistURL: URL) async throws -> PlaylistImportResult {
+        let contents = try String(contentsOf: playlistURL, encoding: .utf8)
+        let baseDirectory = playlistURL.deletingLastPathComponent()
+        var items: [MediaItem] = []
+        var issues: [PlaylistImportIssue] = []
+
+        for (offset, rawLine) in contents.components(separatedBy: .newlines).enumerated() {
+            let entry = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !entry.isEmpty, !entry.hasPrefix("#") else { continue }
+
+            let result = await mediaItems(fromPlaylistEntry: entry, lineNumber: offset + 1, baseDirectory: baseDirectory)
+            if result.items.isEmpty, let issue = result.issue {
+                issues.append(issue)
+            } else {
+                items.append(contentsOf: result.items)
+            }
+        }
+
+        return PlaylistImportResult(items: items, issues: issues)
+    }
+
+    private func mediaItems(fromPlaylistEntry entry: String, lineNumber: Int, baseDirectory: URL) async -> PlaylistEntryImportResult {
+        if let url = URL(string: entry), let scheme = url.scheme, !scheme.isEmpty {
+            if url.isFileURL {
+                let items = mediaURLs(from: url).map(MediaItem.init(url:))
+                return PlaylistEntryImportResult(
+                    items: items,
+                    issue: items.isEmpty ? playlistImportIssue(for: url, lineNumber: lineNumber, entry: entry) : nil
+                )
+            }
+
+            let validatedStream = await NetworkStreamValidator.validatedStream(
+                from: entry,
+                allowPrivateNetworkHosts: stateStore.privateNetworkStreamsEnabled()
+            )
+            if let validatedStream {
+                rememberValidatedNetworkStream(validatedStream)
+                return PlaylistEntryImportResult(items: [MediaItem(url: validatedStream.url)], issue: nil)
+            }
+            return PlaylistEntryImportResult(
+                items: [],
+                issue: PlaylistImportIssue(
+                    lineNumber: lineNumber,
+                    entry: entry,
+                    reason: "Stream URL is invalid, unsupported, private/local, or could not be resolved."
+                )
+            )
+        }
+
+        let fileURL = PlaylistWorkflow.fileURL(fromPlaylistEntry: entry, baseDirectory: baseDirectory)
+        let items = mediaURLs(from: fileURL).map(MediaItem.init(url:))
+        return PlaylistEntryImportResult(
+            items: items,
+            issue: items.isEmpty ? playlistImportIssue(for: fileURL, lineNumber: lineNumber, entry: entry) : nil
+        )
+    }
+
+    private func playlistImportIssue(for url: URL, lineNumber: Int, entry: String) -> PlaylistImportIssue {
+        guard url.isFileURL else {
+            return PlaylistImportIssue(lineNumber: lineNumber, entry: entry, reason: "Unsupported URL.")
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return PlaylistImportIssue(lineNumber: lineNumber, entry: entry, reason: "File does not exist.")
+        }
+
+        if isDirectory.boolValue {
+            return PlaylistImportIssue(lineNumber: lineNumber, entry: entry, reason: "Folder contains no supported media.")
+        }
+
+        return PlaylistImportIssue(lineNumber: lineNumber, entry: entry, reason: "Unsupported media type.")
+    }
+
+    private func exportedPlaylistText() -> String {
+        PlaylistWorkflow.exportedM3U8Text(for: playlist)
+    }
+
+    private func showPlaylistFileError(title: String, detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.addButton(withTitle: "OK")
+
+        if detail.contains("\n") || detail.count > 240 {
+            alert.informativeText = "Review the entries below."
+            let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 220))
+            scrollView.hasVerticalScroller = true
+            scrollView.borderType = .bezelBorder
+
+            let textView = NSTextView(frame: scrollView.bounds)
+            textView.string = detail
+            textView.isEditable = false
+            textView.isSelectable = true
+            textView.drawsBackground = false
+            textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            textView.textColor = .labelColor
+            textView.textContainerInset = NSSize(width: 8, height: 8)
+            textView.autoresizingMask = [.width]
+            textView.textContainer?.containerSize = NSSize(width: scrollView.bounds.width, height: .greatestFiniteMagnitude)
+            textView.textContainer?.widthTracksTextView = true
+            scrollView.documentView = textView
+            alert.accessoryView = scrollView
+        } else {
+            alert.informativeText = detail
+        }
+        alert.runModal()
+    }
+
+    private func sortPlaylistPreservingCurrentItem() {
+        sortPlaylistPreserving(item: currentItem)
+    }
+
+    private func sortPlaylistPreserving(item selectedItem: MediaItem?) {
+        guard playlistSortMode != .currentOrder else { return }
+        PlaylistWorkflow.sort(&playlist, by: playlistSortMode)
+        if let selectedItem {
+            currentIndex = playlist.firstIndex(of: selectedItem)
+        }
+    }
+
+    private func confirmClearPlaylist() -> Bool {
+        guard !playlist.isEmpty else {
+            showHUD("Playlist is empty")
+            return false
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Clear Playlist?"
+        alert.informativeText = "This removes all items from the current playlist. Media files on disk are not deleted."
+        alert.addButton(withTitle: "Clear Playlist")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
         let totalSeconds = max(Int(seconds.rounded()), 0)
@@ -2026,8 +2817,8 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc private func tableViewDoubleClicked(_ sender: NSTableView) {
-        guard sender.clickedRow >= 0 else { return }
-        playItem(at: sender.clickedRow)
+        guard let index = playlistIndex(forVisibleRow: sender.clickedRow) else { return }
+        playItem(at: index)
     }
 
     @objc private func playerDidFinish(_ notification: Notification) {
@@ -2050,24 +2841,64 @@ final class PlayerViewController: NSViewController {
 
 extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
-        playlist.count
+        visiblePlaylistIndices.count
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         if currentEngine == .none {
             let row = tableView.selectedRow
-            if playlist.indices.contains(row) {
-                currentIndex = row
-                updateNowPlaying(title: playlist[row].title, detail: "Ready to play")
+            if let index = playlistIndex(forVisibleRow: row) {
+                currentIndex = index
+                updateNowPlaying(title: playlist[index].title, detail: "Ready to play")
                 savePlaylistState()
             }
         }
         updateMetadataForSelection()
+        refreshPlaylistActionStates()
+    }
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard canReorderPlaylist, let index = playlistIndex(forVisibleRow: row) else { return nil }
+        let selectedIndexes = selectedPlaylistIndices()
+        let indexesToWrite = selectedIndexes.contains(index) ? selectedIndexes : [index]
+        let item = NSPasteboardItem()
+        item.setString(indexesToWrite.map(String.init).joined(separator: ","), forType: .videoPlayerPlaylistRows)
+        return item
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation dropOperation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard canReorderPlaylist,
+              info.draggingPasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.videoPlayerPlaylistRows.rawValue])
+        else {
+            return []
+        }
+
+        tableView.setDropRow(max(row, 0), dropOperation: .above)
+        return .move
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: NSDraggingInfo,
+        row: Int,
+        dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        guard canReorderPlaylist else { return false }
+        let sourceIndexes = playlistIndexes(from: info.draggingPasteboard)
+        guard !sourceIndexes.isEmpty else { return false }
+        reorderPlaylistItems(at: sourceIndexes, to: row < 0 ? playlist.count : row)
+        return true
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = NSUserInterfaceItemIdentifier("MediaCell")
-        let item = playlist[row]
+        guard let index = playlistIndex(forVisibleRow: row) else { return nil }
+        let item = playlist[index]
         let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? MediaCellView ?? MediaCellView()
         cell.identifier = identifier
         cell.configure(title: item.title, subtitle: item.isNetworkStream ? "STREAM" : item.fileExtension.uppercased())
@@ -2087,6 +2918,10 @@ extension PlayerViewController: NSWindowDelegate {
         videoAdjustmentPanel = nil
         videoAdjustmentSliders = [:]
     }
+}
+
+private extension NSPasteboard.PasteboardType {
+    static let videoPlayerPlaylistRows = NSPasteboard.PasteboardType("com.jaysonguglietta.videoplayer.playlist.rows")
 }
 
 private enum PlaybackEngine {

@@ -2,17 +2,27 @@
 
 ## Opening Media
 
-Use File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work only in an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
+Use the Open Media action in the empty player, File > Open to replace the playlist, or File > Add to Playlist to append media. You can also drag files or folders onto the player. Apple-native playback supports MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. Some MP4 files contain Dolby Vision or HEVC/x265 video that macOS can expose as audio-only; the app detects those codecs before playback and uses a trusted external engine when available. Additional formats such as MKV, AVI, WebM, FLV, FLAC, OGG, and OPUS can work only in an advanced external-engine build when the user has VLC or mpv installed separately and trusted.
 
-Use File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. The app checks public stream hosts before adding them to the playlist. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
+Use Open Stream in the empty player or File > Open Network Stream for public stream URLs such as HTTP, HTTPS, RTSP, or HLS playlists. Other URL schemes are rejected, and private/local network targets, including DNS names that resolve to private/local addresses, are blocked by default. The app checks public stream hosts before adding them to the playlist and again before playback. Use Privacy > Allow Private Network Streams only for trusted LAN cameras or local streams.
 
 Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and extra metadata from a user-installed VLC copy when available. Press Space, K, the play button, or double-click the playlist row to start.
 
 Use File > Open Recent to reload a recently played file or stream when playback history is enabled. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
 
+Use the search field above the playlist to filter by title, file extension, path, or stream URL. Use the sort menu to keep the current order or sort by title, media type, or location. The inspector tells you when nothing matches the current search.
+
+Use File > Import Playlist, File > Open, or drag-and-drop to load `.m3u` or `.m3u8` playlists. Relative paths are resolved next to the playlist file, local entries must point to supported media, and network entries go through the same public/private stream checks as Open Network Stream. Use File > Export Playlist to save the current playlist as `.m3u8`.
+
+When an imported playlist has skipped entries, the app shows the line number, entry, and reason for each skipped line so you can fix missing files, unsupported extensions, or blocked stream URLs.
+
+Drag playlist rows to reorder them when the sort menu is set to current order and no search filter is active. Select one or more rows and use the minus button, File > Remove Selected from Playlist, or the Delete key to remove them from the playlist. Use the trash button to clear the current playlist. Clearing or removing playlist rows never deletes media files from disk.
+
+The playlist, media inspector, transport controls, volume and speed controls, audio controls, subtitle controls, video adjustment sliders, and network stream field expose labels and help text for VoiceOver.
+
 ## Playback
 
-The transport bar includes previous, 10-second rewind, play/pause, 10-second fast-forward, next, speed, volume, and full-screen controls.
+The transport bar includes previous, 10-second rewind, play/pause, 10-second fast-forward, next, speed, volume, sidebar, and full-screen controls. Audio and subtitle tools sit in separate rows below the transport controls so they remain readable when the sidebar is open.
 
 Keyboard shortcuts:
 
@@ -24,6 +34,7 @@ Keyboard shortcuts:
 - M: mute
 - F: full screen
 - B: show or hide the sidebar
+- Delete: remove selected playlist rows
 - [: previous playlist item
 - ]: next playlist item
 
@@ -31,7 +42,9 @@ Keyboard shortcuts:
 
 Use View > Toggle Sidebar to show or hide the playlist and inspector. Use View > Mini Player for a small floating player, View > Picture in Picture for a floating playback window, View > Theater Mode for a clean playback-focused view, or the full-screen button for macOS full screen.
 
-Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines when the app was built as an advanced external-engine variant. Default commercial builds keep this option unavailable. Advanced builds only use external engines when strict code-signature, Team ID, and Gatekeeper checks trust the engine.
+Use Playback > Enable External VLC/mpv Engines to opt in to separately installed media engines when the app was built as an advanced external-engine variant. Default commercial builds keep this option unavailable. Advanced builds only use external engines when strict code-signature, Team ID, and Gatekeeper checks trust the engine. If a file requires an external engine for video, the app can prompt you to enable trusted external playback before it starts.
+
+If a local file starts with sound but no picture under Apple-native playback, Video Player stops the native attempt and either falls back to a trusted VLC/mpv engine or shows a codec message explaining that the current build cannot render that video stream.
 
 Use View > Video Adjustments to change brightness, contrast, saturation, hue, and gamma for video backed by a trusted user-installed VLC copy. Use View > Reset Video Adjustments to return to the original picture.
 
@@ -88,8 +101,10 @@ The player briefly shows an on-screen HUD for common actions such as seeking, vo
 
 ## Updates and Licenses
 
-Use Video Player > Check for Updates or Help > Check for Updates to check the GitHub repository releases. If a newer release with a signed update manifest is available, the app verifies the manifest, downloads the `.dmg`, verifies its SHA-256 checksum, verifies the Developer ID Team ID, runs Gatekeeper assessment, and then offers to open it or reveal it in Finder.
+Use Video Player > Check for Updates or Help > Check for Updates to check the GitHub repository releases. The app compares the installed version against the newest published release by version. If a newer release with a signed update manifest is available, the app verifies the manifest, downloads the `.dmg`, verifies its SHA-256 checksum, verifies the Developer ID Team ID, runs Gatekeeper assessment, and then offers to open it or reveal it in Finder. If the installed build is newer than GitHub's newest published release, the app reports that no newer update is available.
 
 Use Video Player > About Video Player for app details. Use Video Player > Open Source Licenses or Help > Open Source Licenses to view notices for Video Player and optional external VLC/mpv integrations.
+
+Use Video Player > Reveal Log File or Help > Reveal Log File when playback freezes, an update check fails, or an external engine is rejected. The log records the playback route, detected codecs, trusted-engine validation commands, VLC/mpv startup, update-check results, and verification failures.
 
 Video Player's own app source code is MIT licensed. The default distributed app is sandboxed and does not bundle or load VLC/libVLC, mpv, FFmpeg, or other third-party media engines. Optional advanced user-installed integrations keep their own upstream license terms.

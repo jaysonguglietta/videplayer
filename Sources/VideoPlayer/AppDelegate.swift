@@ -10,17 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var privateStreamsMenuItem: NSMenuItem?
     private var saveHistoryMenuItem: NSMenuItem?
     private var clearHistoryOnQuitMenuItem: NSMenuItem?
+    private var pendingOpenURLs: [URL] = []
 
     private var playerViewController: PlayerViewController? {
         playerWindowController?.playerViewController
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppLogger.info("Application launched version=\(OpenSourceNotices.appVersion) log=\(AppLogger.logFileURL.path)", flush: true)
         let controller = PlayerWindowController()
         playerWindowController = controller
         controller.showWindow(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         buildMainMenu()
+        openPendingURLsIfNeeded()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -28,7 +31,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        playerWindowController?.playerViewController.openMedia(urls, replacePlaylist: true)
+        AppLogger.info("Application requested to open \(urls.count) URL(s): \(urls.map(\.lastPathComponent).joined(separator: ", "))")
+        guard let playerViewController else {
+            pendingOpenURLs.append(contentsOf: urls)
+            return
+        }
+        playerViewController.openMedia(urls, replacePlaylist: true)
+    }
+
+    private func openPendingURLsIfNeeded() {
+        guard !pendingOpenURLs.isEmpty, let playerViewController else { return }
+        let urls = pendingOpenURLs
+        pendingOpenURLs.removeAll()
+        playerViewController.openMedia(urls, replacePlaylist: true)
     }
 
     @objc private func openDocument(_ sender: Any?) {
@@ -37,6 +52,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func addToPlaylist(_ sender: Any?) {
         playerViewController?.openFilesPanel(replacePlaylist: false)
+    }
+
+    @objc private func importPlaylist(_ sender: Any?) {
+        playerViewController?.importPlaylistPanel(sender)
+    }
+
+    @objc private func exportPlaylist(_ sender: Any?) {
+        playerViewController?.exportPlaylistPanel(sender)
+    }
+
+    @objc private func removeSelectedFromPlaylist(_ sender: Any?) {
+        playerViewController?.removeSelectedPlaylistItems(sender)
     }
 
     @objc private func openNetworkStream(_ sender: Any?) {
@@ -206,11 +233,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
+        AppLogger.info("User requested update check")
         updateChecker.checkForUpdates(presentingWindow: playerWindowController?.window)
     }
 
     @objc private func openProjectRepository(_ sender: Any?) {
         NSWorkspace.shared.open(OpenSourceNotices.repositoryURL)
+    }
+
+    @objc private func revealLogFile(_ sender: Any?) {
+        let logURL = AppLogger.ensureLogFile()
+        AppLogger.info("User revealed log file at \(logURL.path)", flush: true)
+        NSWorkspace.shared.activateFileViewerSelecting([logURL])
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -238,6 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let licensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
         licensesItem.target = self
         appMenu.addItem(licensesItem)
+        let logItem = NSMenuItem(title: "Reveal Log File", action: #selector(revealLogFile(_:)), keyEquivalent: "")
+        logItem.target = self
+        appMenu.addItem(logItem)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit Video Player", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
@@ -251,6 +288,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addItem.target = self
         fileMenu.addItem(openItem)
         fileMenu.addItem(addItem)
+        fileMenu.addItem(.separator())
+        let importPlaylistItem = NSMenuItem(title: "Import Playlist...", action: #selector(importPlaylist(_:)), keyEquivalent: "")
+        importPlaylistItem.target = self
+        fileMenu.addItem(importPlaylistItem)
+        let exportPlaylistItem = NSMenuItem(title: "Export Playlist...", action: #selector(exportPlaylist(_:)), keyEquivalent: "")
+        exportPlaylistItem.target = self
+        fileMenu.addItem(exportPlaylistItem)
+        fileMenu.addItem(.separator())
+        let removeSelectedItem = NSMenuItem(title: "Remove Selected from Playlist", action: #selector(removeSelectedFromPlaylist(_:)), keyEquivalent: "")
+        removeSelectedItem.target = self
+        fileMenu.addItem(removeSelectedItem)
 
         let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         openRecentMenu.delegate = self
@@ -388,6 +436,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let helpLicensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
         helpLicensesItem.target = self
         helpMenu.addItem(helpLicensesItem)
+        let helpLogItem = NSMenuItem(title: "Reveal Log File", action: #selector(revealLogFile(_:)), keyEquivalent: "")
+        helpLogItem.target = self
+        helpMenu.addItem(helpLogItem)
         helpMenu.addItem(.separator())
         let repositoryItem = NSMenuItem(title: "Project on GitHub", action: #selector(openProjectRepository(_:)), keyEquivalent: "")
         repositoryItem.target = self

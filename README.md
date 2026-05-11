@@ -26,17 +26,24 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - Network stream opening for public HTTP, HTTPS, RTSP, and HLS-style URLs; private/local targets and DNS names resolving to private/local addresses are blocked by default.
 - Privacy controls for enabling saved playback history, clearing history on quit, and clearing all history.
 - On-screen HUD for seek, volume, speed, subtitle, and resume feedback.
+- VoiceOver-friendly labels and help text for the playlist, inspector, transport, volume, speed, audio, subtitle, and adjustment controls.
 
 ## Controls
 
+- On first run, the player area offers Open Media and Open Stream actions, and it also accepts drag-and-drop files or folders.
+- Use the sidebar search and sort controls to organize the playlist by title, media type, location, or the current order.
+- Import or export portable M3U/M3U8 playlist files from the File menu.
+- Drag playlist rows to reorder them when using current-order sorting, or remove selected rows with the minus button or Delete key.
 - Use the circular 10-second buttons or the left/right arrow keys to rewind and fast-forward.
 - Move the volume slider up to 200%, or scroll the mouse wheel over the player area to adjust volume.
+- Audio and subtitle tools are split into separate lower control rows so the window stays usable when the sidebar is visible.
 - Opened files are selected first so the inspector can show metadata; press Space, K, or double-click the row to start playback.
+- Clearing the playlist asks for confirmation and never deletes media files from disk.
 - Press Space or K to play/pause, J/L to seek, Up/Down for volume, M to mute, F for full screen, B to show or hide the sidebar, and [/] for previous/next playlist items.
 
 ## Format support
 
-The default sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. This default build is sandboxed and does not load third-party media engines.
+The default sold app plays Apple-native formats in-app through AVFoundation, including MP4, M4V, MOV, MP3, M4A, AAC, WAV, AIFF, and CAF. This default build is sandboxed and does not load third-party media engines. Some MP4 files still contain advanced video such as Dolby Vision or HEVC/x265; the app inspects local video sample entries before playback so those files can be routed to a trusted external engine when available instead of silently playing audio-only.
 
 For broad codec coverage, an advanced build can use a copy of VLC/libVLC that the user installed separately. This build mode is disabled by default; it must be created with `ENABLE_EXTERNAL_ENGINES=1`, users must enable external engines, and the engine must pass strict code-signature, Team ID, and Gatekeeper checks. The commercial DMG does not bundle VLC, libVLC, VLC plugins, mpv, FFmpeg, or any third-party media engine.
 
@@ -83,21 +90,20 @@ To build the advanced external-engine variant instead of the sandboxed native-on
 
 ## Updates and Licenses
 
-Use Video Player > Check for Updates or Help > Check for Updates to look for the latest GitHub Release. The updater requires a signed `video-player-update.json` manifest, verifies the manifest against the app's pinned public key, downloads the referenced `.dmg`, verifies its SHA-256, verifies the Developer ID Team ID, and runs Gatekeeper assessment before offering to open it.
+Use Video Player > Check for Updates or Help > Check for Updates to look for the newest published GitHub Release by version. If the installed build is newer than the newest published release, the app reports that no newer update is available and tells you to publish the current version. For newer releases, the updater requires a signed `video-player-update.json` manifest, verifies the manifest against the app's pinned public key, downloads the referenced `.dmg`, verifies its SHA-256, verifies the Developer ID Team ID, and runs Gatekeeper assessment before offering to open it.
 
-To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), keep the private update key outside the repo and common sync folders, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
+To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), store the private update key in Keychain as a generic password named `videoplayer-update-signing-private-key`, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
 
 ```sh
-chmod 700 "$HOME/.videoplayer-release"
-chmod 600 "$HOME/.videoplayer-release/update-signing-private-key.pem"
 git tag -s "v0.1.6" -m "Release v0.1.6"
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
-export UPDATE_SIGNING_PRIVATE_KEY="$HOME/.videoplayer-release/update-signing-private-key.pem"
+export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
+export RELEASE_APPROVAL="v0.1.6"
 ./Scripts/publish_release.sh
 ```
 
-Use Video Player > Open Source Licenses or Help > Open Source Licenses for license and open source software notices.
+Use Video Player > Reveal Log File or Help > Reveal Log File to open the persistent diagnostic log. The log records app launch, update checks, playback routing, codec detection, trusted VLC/mpv validation, and external-engine startup/failure details.
 
 Video Player's application source code is released under the [MIT License](LICENSE). The distributed app does not bundle VLC/libVLC, mpv, FFmpeg, or other third-party media engines; optional user-installed integrations keep their own upstream license terms.

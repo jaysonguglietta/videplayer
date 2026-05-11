@@ -4,6 +4,11 @@ import Foundation
 enum NetworkStreamValidator {
     private static let allowedSchemes: Set<String> = ["http", "https", "rtsp", "rtsps"]
 
+    struct ValidatedStream: Equatable {
+        let url: URL
+        let resolvedAddresses: Set<String>
+    }
+
     static func validatedURL(
         from value: String,
         allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams()
@@ -31,12 +36,24 @@ enum NetworkStreamValidator {
         allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
         resolvedAddressesForHost: @escaping (String) async -> [String]? = SystemNetworkAddressResolver.resolvedAddresses
     ) async -> URL? {
+        await validatedStream(
+            from: value,
+            allowPrivateNetworkHosts: allowPrivateNetworkHosts,
+            resolvedAddressesForHost: resolvedAddressesForHost
+        )?.url
+    }
+
+    static func validatedStream(
+        from value: String,
+        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        resolvedAddressesForHost: @escaping (String) async -> [String]? = SystemNetworkAddressResolver.resolvedAddresses
+    ) async -> ValidatedStream? {
         guard let url = validatedURL(from: value, allowPrivateNetworkHosts: allowPrivateNetworkHosts) else {
             return nil
         }
 
         guard !allowPrivateNetworkHosts, let host = url.host else {
-            return url
+            return ValidatedStream(url: url, resolvedAddresses: [])
         }
 
         guard let resolvedAddresses = await resolvedAddressesForHost(host),
@@ -46,7 +63,7 @@ enum NetworkStreamValidator {
             return nil
         }
 
-        return url
+        return ValidatedStream(url: url, resolvedAddresses: Set(resolvedAddresses))
     }
 
     static func isPrivateOrLocalHost(_ host: String) -> Bool {

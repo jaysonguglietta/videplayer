@@ -10,6 +10,7 @@ final class PlaybackStateStore {
         static let recentMedia = "recentMedia"
         static let libraryFolders = "libraryFolders"
         static let audioPreset = "audioPreset"
+        static let playlistSortMode = "playlistSortMode"
     }
 
     private let defaults: UserDefaults
@@ -68,6 +69,14 @@ final class PlaybackStateStore {
 
     func loadAudioPreset() -> String? {
         defaults.string(forKey: Key.audioPreset)
+    }
+
+    func savePlaylistSortMode(_ mode: String) {
+        defaults.set(mode, forKey: Key.playlistSortMode)
+    }
+
+    func loadPlaylistSortMode() -> String? {
+        defaults.string(forKey: Key.playlistSortMode)
     }
 
     func addRecentMedia(_ item: MediaItem) {

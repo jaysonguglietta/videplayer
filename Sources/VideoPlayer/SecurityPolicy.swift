@@ -122,29 +122,42 @@ enum PrivacySettings {
 enum ExternalMediaEngineTrust {
     static func isEngineAllowed(at url: URL, defaults: UserDefaults = .standard) -> Bool {
         guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            AppLogger.debug("External engine rejected because this build does not allow external engines: \(url.path)")
             return false
         }
         guard PrivacySettings.externalMediaEnginesEnabled(defaults: defaults) else {
+            AppLogger.debug("External engine rejected because user opt-in is disabled: \(url.path)")
             return false
         }
 
         if AppSecurityPolicy.allowsUnverifiedExternalEnginesForDevelopment {
+            AppLogger.warning("External engine allowed by debug-only unverified override: \(url.path)", flush: true)
             return true
         }
 
         let trustedTeamIDs = AppSecurityPolicy.trustedExternalEngineTeamIDs
         guard !trustedTeamIDs.isEmpty else {
+            AppLogger.warning("External engine rejected because no trusted Team IDs are configured: \(url.path)", flush: true)
             return false
         }
 
         do {
             let target = verificationTarget(for: url)
+            AppLogger.info("Validating external engine target=\(target.path) requestedPath=\(url.path)", flush: true)
             guard let teamID = try CodeSignatureVerifier.teamIdentifier(forCodeAt: target) else {
+                AppLogger.warning("External engine rejected because no Team ID was found: \(target.path)", flush: true)
                 return false
             }
             try CodeSignatureVerifier.assessGatekeeperExecute(for: target)
-            return trustedTeamIDs.contains(teamID)
+            let allowed = trustedTeamIDs.contains(teamID)
+            if allowed {
+                AppLogger.info("External engine trusted target=\(target.path) teamID=\(teamID)", flush: true)
+            } else {
+                AppLogger.warning("External engine rejected target=\(target.path) teamID=\(teamID) trusted=\(trustedTeamIDs.sorted().joined(separator: ","))", flush: true)
+            }
+            return allowed
         } catch {
+            AppLogger.error("External engine validation failed path=\(url.path) error=\(error.localizedDescription)", flush: true)
             return false
         }
     }
@@ -228,6 +241,10 @@ enum CodeSignatureVerifier {
 
     @discardableResult
     private static func run(_ executable: String, arguments: [String]) throws -> CommandResult {
+        let commandDescription = ([executable] + arguments).joined(separator: " ")
+        let startedAt = Date()
+        AppLogger.info("Starting security command: \(commandDescription)", flush: true)
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -237,11 +254,27 @@ enum CodeSignatureVerifier {
         process.standardOutput = output
         process.standardError = error
 
+        let group = DispatchGroup()
+        group.enter()
+        process.terminationHandler = { _ in
+            group.leave()
+        }
+
         try process.run()
-        process.waitUntilExit()
+        let timeout: DispatchTime = .now() + .seconds(10)
+        guard group.wait(timeout: timeout) == .success else {
+            process.terminate()
+            if group.wait(timeout: .now() + .seconds(2)) != .success {
+                process.interrupt()
+            }
+            AppLogger.error("Security command timed out after 10s: \(commandDescription)", flush: true)
+            throw CodeSignatureVerificationError.commandTimedOut(commandDescription)
+        }
 
         let stdout = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let elapsed = Date().timeIntervalSince(startedAt)
+        AppLogger.info(String(format: "Security command finished status=%d elapsed=%.2fs command=%@", process.terminationStatus, elapsed, commandDescription), flush: true)
         return CommandResult(status: process.terminationStatus, output: stdout, error: stderr)
     }
 }
@@ -258,6 +291,7 @@ struct CommandResult {
 
 enum CodeSignatureVerificationError: LocalizedError, Equatable {
     case commandFailed(String)
+    case commandTimedOut(String)
     case invalidCodeSignature(String)
     case teamIdentifierMismatch(expected: String, actual: String)
     case gatekeeperAssessmentFailed(String)
@@ -267,6 +301,8 @@ enum CodeSignatureVerificationError: LocalizedError, Equatable {
         switch self {
         case .commandFailed(let detail):
             "Code signature verification failed: \(detail)"
+        case .commandTimedOut(let command):
+            "Code signature verification timed out while running: \(command)"
         case .invalidCodeSignature(let detail):
             "Code signature validation failed: \(detail)"
         case .teamIdentifierMismatch(let expected, let actual):

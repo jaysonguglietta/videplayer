@@ -31,8 +31,12 @@ struct UpdateManifest: Codable, Equatable {
 }
 
 enum VersionComparator {
+    static func compare(_ candidate: String, to current: String) -> ComparisonResult {
+        normalizedVersion(candidate).compare(normalizedVersion(current), options: .numeric)
+    }
+
     static func isVersion(_ candidate: String, newerThan current: String) -> Bool {
-        normalizedVersion(candidate).compare(normalizedVersion(current), options: .numeric) == .orderedDescending
+        compare(candidate, to: current) == .orderedDescending
     }
 
     static func normalizedVersion(_ version: String) -> String {

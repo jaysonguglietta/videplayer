@@ -17,6 +17,7 @@ final class MediaCellView: NSTableCellView {
     func configure(title: String, subtitle: String) {
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
+        setAccessibilityLabel([title, subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 
     private func setup() {

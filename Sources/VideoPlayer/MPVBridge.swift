@@ -20,9 +20,11 @@ final class MPVBridge {
         stop()
 
         guard let executablePath else {
+            AppLogger.warning("mpv playback requested but no trusted executable was available", flush: true)
             throw MPVBridgeError.notInstalled
         }
 
+        AppLogger.info("Launching mpv executable=\(executablePath) url=\(url.absoluteString) volume=\(volume) speed=\(speed)", flush: true)
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -38,10 +40,12 @@ final class MPVBridge {
         ]
         process.standardInput = pipe
         process.terminationHandler = { _ in
+            AppLogger.info("mpv terminated executable=\(executablePath)", flush: true)
             DispatchQueue.main.async(execute: onExit)
         }
 
         try process.run()
+        AppLogger.info("mpv process started pid=\(process.processIdentifier)", flush: true)
         self.process = process
         self.inputPipe = pipe
     }
@@ -68,6 +72,7 @@ final class MPVBridge {
 
     func stop() {
         if process?.isRunning == true {
+            AppLogger.info("Stopping mpv process pid=\(process?.processIdentifier ?? -1)", flush: true)
             send("quit")
             process?.terminate()
         }
@@ -94,7 +99,10 @@ final class MPVBridge {
             "/Applications/mpv.app/Contents/MacOS/mpv"
         ]
 
-        if includeDevelopmentPathLookup, environment["VIDEOPLAYER_ALLOW_PATH_MPV"] == "1" {
+        if isDevelopmentPathLookupAllowed(
+            environment: environment,
+            includeDevelopmentPathLookup: includeDevelopmentPathLookup
+        ) {
             let pathEntries = (environment["PATH"] ?? "")
                 .split(separator: ":")
                 .map(String.init)
@@ -107,6 +115,17 @@ final class MPVBridge {
     private static var developmentPathLookupEnabled: Bool {
         #if DEBUG
         true
+        #else
+        false
+        #endif
+    }
+
+    static func isDevelopmentPathLookupAllowed(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        includeDevelopmentPathLookup: Bool = developmentPathLookupEnabled
+    ) -> Bool {
+        #if DEBUG
+        includeDevelopmentPathLookup && environment["VIDEOPLAYER_ALLOW_PATH_MPV"] == "1"
         #else
         false
         #endif

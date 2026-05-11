@@ -47,6 +47,7 @@ final class VLCBridge {
     }
 
     func play(url: URL, in videoView: NSView, volume: Double, speed: Double) throws {
+        AppLogger.info("VLCBridge.play entered url=\(url.absoluteString) volume=\(volume) speed=\(speed)", flush: true)
         let api = try loadAPI()
         let instance = try loadInstance(api: api)
 
@@ -64,11 +65,13 @@ final class VLCBridge {
         }
 
         guard let media else {
+            AppLogger.error("VLCBridge could not create media for url=\(url.absoluteString)", flush: true)
             throw VLCBridgeError.playbackFailed("VLC could not open this media path.")
         }
         defer { api.mediaRelease(media) }
 
         guard let newPlayer = api.mediaPlayerNewFromMedia(media) else {
+            AppLogger.error("VLCBridge could not create media player for url=\(url.absoluteString)", flush: true)
             throw VLCBridgeError.playbackFailed("VLC could not create a media player.")
         }
 
@@ -79,9 +82,11 @@ final class VLCBridge {
         _ = api.setRate(newPlayer, Float(speed))
 
         if api.play(newPlayer) != 0 {
+            AppLogger.error("VLCBridge play returned failure for url=\(url.absoluteString)", flush: true)
             stopPlayer()
             throw VLCBridgeError.playbackFailed("VLC could not start playback.")
         }
+        AppLogger.info("VLCBridge play returned success for url=\(url.absoluteString)", flush: true)
     }
 
     func addSubtitle(url: URL) -> Bool {
@@ -364,8 +369,10 @@ final class VLCBridge {
         if let api {
             return api
         }
+        AppLogger.info("Loading VLC dynamic API", flush: true)
         let loadedAPI = try DynamicLibVLC()
         api = loadedAPI
+        AppLogger.info("Loaded VLC dynamic API", flush: true)
         return loadedAPI
     }
 
@@ -391,18 +398,22 @@ final class VLCBridge {
         defer { cStrings.forEach { free($0) } }
         let cArguments = cStrings.map { UnsafePointer<CChar>($0) }
 
+        AppLogger.info("Creating VLC codec engine instance arguments=\(arguments.joined(separator: " ")) pluginPath=\(api.pluginPath ?? "none") dataPath=\(api.dataPath ?? "none")", flush: true)
         guard let createdInstance = cArguments.withUnsafeBufferPointer({ buffer in
             api.createInstance(Int32(arguments.count), buffer.baseAddress)
         }) else {
+            AppLogger.error("VLC codec engine instance creation failed", flush: true)
             throw VLCBridgeError.playbackFailed("VLC could not initialize its codec engine.")
         }
 
         instance = createdInstance
+        AppLogger.info("Created VLC codec engine instance", flush: true)
         return createdInstance
     }
 
     private func stopPlayer() {
         guard let api, let player else { return }
+        AppLogger.info("Stopping VLC player", flush: true)
         detachEvents(api: api)
         api.stop(player)
         api.releasePlayer(player)
@@ -809,22 +820,30 @@ private final class DynamicLibVLC {
     private let coreHandle: UnsafeMutableRawPointer?
 
     init() throws {
-        guard let libraryURL = Self.findLibrary() else {
+        AppLogger.info("DynamicLibVLC initialization started", flush: true)
+        guard let runtime = Self.findTrustedRuntime() else {
+            AppLogger.warning("DynamicLibVLC could not find a trusted runtime", flush: true)
             throw VLCBridgeError.notInstalled
         }
+        AppLogger.info("DynamicLibVLC trusted runtime library=\(runtime.libraryURL.path) core=\(runtime.coreLibraryURL.path)", flush: true)
 
-        let coreHandle = Self.findCoreLibrary(for: libraryURL).flatMap {
-            dlopen($0.path, RTLD_NOW | RTLD_GLOBAL)
-        }
-
-        guard let handle = dlopen(libraryURL.path, RTLD_NOW | RTLD_LOCAL) else {
+        guard let coreHandle = dlopen(runtime.coreLibraryURL.path, RTLD_NOW | RTLD_GLOBAL) else {
+            AppLogger.error("DynamicLibVLC failed to dlopen core: \(Self.lastDynamicLoaderError())", flush: true)
             throw VLCBridgeError.loadFailed(Self.lastDynamicLoaderError())
         }
 
+        guard let handle = dlopen(runtime.libraryURL.path, RTLD_NOW | RTLD_LOCAL) else {
+            let loaderError = Self.lastDynamicLoaderError()
+            AppLogger.error("DynamicLibVLC failed to dlopen libvlc: \(loaderError)", flush: true)
+            dlclose(coreHandle)
+            throw VLCBridgeError.loadFailed(loaderError)
+        }
+        AppLogger.info("DynamicLibVLC dlopen succeeded", flush: true)
+
         self.handle = handle
         self.coreHandle = coreHandle
-        self.pluginPath = Self.pluginPath(for: libraryURL)
-        self.dataPath = Self.dataPath(for: libraryURL)
+        self.pluginPath = runtime.pluginPath
+        self.dataPath = runtime.dataPath
         self.createInstance = try Self.load("libvlc_new", from: handle, as: CreateInstance.self)
         self.releaseInstance = try Self.load("libvlc_release", from: handle, as: ReleaseInstance.self)
         self.mediaNewPath = try Self.load("libvlc_media_new_path", from: handle, as: MediaNewPath.self)
@@ -892,13 +911,14 @@ private final class DynamicLibVLC {
     }
 
     static func findLibrary() -> URL? {
-        let fileManager = FileManager.default
-        return candidateLibraryPaths()
-            .map { URL(fileURLWithPath: $0) }
-            .first {
-                fileManager.isReadableFile(atPath: $0.path)
-                    && ExternalMediaEngineTrust.isEngineAllowed(at: $0)
-            }
+        AppLogger.debug("Searching for trusted VLC runtime")
+        let runtime = findTrustedRuntime()
+        if let runtime {
+            AppLogger.info("Trusted VLC runtime found library=\(runtime.libraryURL.path)", flush: true)
+        } else {
+            AppLogger.warning("No trusted VLC runtime found", flush: true)
+        }
+        return runtime?.libraryURL
     }
 
     static func candidateLibraryPaths() -> [String] {
@@ -907,7 +927,39 @@ private final class DynamicLibVLC {
         ]
     }
 
-    private static func findCoreLibrary(for libraryURL: URL) -> URL? {
+    private static func findTrustedRuntime() -> VLCRuntime? {
+        candidateLibraryPaths()
+            .map { URL(fileURLWithPath: $0) }
+            .lazy
+            .compactMap { trustedRuntime(for: $0) }
+            .first
+    }
+
+    private static func trustedRuntime(for libraryURL: URL) -> VLCRuntime? {
+        let fileManager = FileManager.default
+        guard fileManager.isReadableFile(atPath: libraryURL.path),
+              ExternalMediaEngineTrust.isEngineAllowed(at: libraryURL)
+        else {
+            AppLogger.debug("VLC runtime candidate rejected library=\(libraryURL.path)")
+            return nil
+        }
+
+        guard let coreLibraryURL = trustedCoreLibrary(for: libraryURL) else {
+            AppLogger.warning("VLC runtime rejected because trusted libvlccore was not found for library=\(libraryURL.path)", flush: true)
+            return nil
+        }
+
+        let verificationTarget = verificationTarget(forRuntimePath: libraryURL)
+        let isAppRuntime = verificationTarget.pathExtension.caseInsensitiveCompare("app") == .orderedSame
+        return VLCRuntime(
+            libraryURL: libraryURL,
+            coreLibraryURL: coreLibraryURL,
+            pluginPath: isAppRuntime ? pluginPath(for: libraryURL, verificationTarget: verificationTarget) : nil,
+            dataPath: isAppRuntime ? dataPath(for: libraryURL, verificationTarget: verificationTarget) : nil
+        )
+    }
+
+    private static func trustedCoreLibrary(for libraryURL: URL) -> URL? {
         let candidate = libraryURL
             .deletingLastPathComponent()
             .appendingPathComponent("libvlccore.dylib")
@@ -919,10 +971,7 @@ private final class DynamicLibVLC {
         return candidate
     }
 
-    private static func pluginPath(for libraryURL: URL) -> String? {
-        guard verificationTarget(forRuntimePath: libraryURL).pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
-            return nil
-        }
+    private static func pluginPath(for libraryURL: URL, verificationTarget: URL) -> String? {
         let runtimeRoot = libraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -930,13 +979,13 @@ private final class DynamicLibVLC {
             runtimeRoot.appendingPathComponent("plugins").path,
             runtimeRoot.appendingPathComponent("lib/vlc/plugins").path
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+        return candidates.first {
+            FileManager.default.fileExists(atPath: $0)
+                && isPath($0, containedIn: verificationTarget)
+        }
     }
 
-    private static func dataPath(for libraryURL: URL) -> String? {
-        guard verificationTarget(forRuntimePath: libraryURL).pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
-            return nil
-        }
+    private static func dataPath(for libraryURL: URL, verificationTarget: URL) -> String? {
         let runtimeRoot = libraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -944,11 +993,20 @@ private final class DynamicLibVLC {
             runtimeRoot.appendingPathComponent("share").path,
             runtimeRoot.appendingPathComponent("share/vlc").path
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+        return candidates.first {
+            FileManager.default.fileExists(atPath: $0)
+                && isPath($0, containedIn: verificationTarget)
+        }
     }
 
     private static func verificationTarget(forRuntimePath url: URL) -> URL {
         ExternalMediaEngineTrust.verificationTarget(for: url)
+    }
+
+    private static func isPath(_ path: String, containedIn parent: URL) -> Bool {
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        let parentPath = parent.standardizedFileURL.path
+        return standardizedPath == parentPath || standardizedPath.hasPrefix(parentPath + "/")
     }
 
     private static func load<T>(_ symbol: String, from handle: UnsafeMutableRawPointer, as type: T.Type) throws -> T {
@@ -967,6 +1025,13 @@ private final class DynamicLibVLC {
         guard let error = dlerror() else { return "Unknown dynamic loader error." }
         return String(cString: error)
     }
+}
+
+private struct VLCRuntime {
+    let libraryURL: URL
+    let coreLibraryURL: URL
+    let pluginPath: String?
+    let dataPath: String?
 }
 
 enum VLCBridgeError: LocalizedError {

@@ -7,6 +7,9 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertTrue(VersionComparator.isVersion("v0.1.10", newerThan: "0.1.2"))
         XCTAssertFalse(VersionComparator.isVersion("v0.1.2", newerThan: "0.1.2"))
         XCTAssertFalse(VersionComparator.isVersion("0.1.1", newerThan: "0.1.2"))
+        XCTAssertEqual(VersionComparator.compare("v0.1.1", to: "0.1.6"), .orderedAscending)
+        XCTAssertEqual(VersionComparator.compare("v0.1.6", to: "0.1.6"), .orderedSame)
+        XCTAssertEqual(VersionComparator.compare("v0.1.10", to: "0.1.6"), .orderedDescending)
     }
 
     func testNetworkStreamValidatorRestrictsSchemes() {
@@ -56,6 +59,19 @@ final class SecurityHelpersTests: XCTestCase {
             resolvedAddressesForHost: { _ in ["93.184.216.34"] }
         )
         XCTAssertNotNil(url)
+    }
+
+    func testNetworkStreamValidatorReturnsPinnedPublicAddresses() async throws {
+        let stream = await NetworkStreamValidator.validatedStream(
+            from: "https://media.example.com/live.m3u8",
+            resolvedAddressesForHost: { _ in ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"] }
+        )
+
+        XCTAssertEqual(stream?.url.host, "media.example.com")
+        XCTAssertEqual(stream?.resolvedAddresses, Set([
+            "93.184.216.34",
+            "2606:2800:220:1:248:1893:25c8:1946"
+        ]))
     }
 
     func testNetworkStreamValidatorFailsClosedWhenDNSDoesNotResolve() async {
@@ -220,6 +236,95 @@ final class SecurityHelpersTests: XCTestCase {
             includeDevelopmentPathLookup: false
         )
         XCTAssertFalse(releaseCandidates.contains("/tmp/tools/mpv"))
+        XCTAssertFalse(MPVBridge.isDevelopmentPathLookupAllowed(
+            environment: [
+                "PATH": "/tmp/tools",
+                "VIDEOPLAYER_ALLOW_PATH_MPV": "1"
+            ],
+            includeDevelopmentPathLookup: false
+        ))
+    }
+
+    func testNativePlaybackPolicyRequiresExternalForDolbyVisionCodecs() {
+        let assessment = NativePlaybackPolicy.assessment(
+            fileExtension: "mp4",
+            nativeExtensions: ["mp4", "m4v", "mov"],
+            videoCodecs: ["dvh1", "hev1"]
+        )
+
+        XCTAssertEqual(assessment.routing, .requiresExternal)
+        XCTAssertTrue(assessment.requiresExternalEngine)
+        XCTAssertTrue(assessment.reason?.contains("Dolby Vision") == true)
+    }
+
+    func testNativePlaybackPolicyPrefersExternalForHEVCCodecs() {
+        let assessment = NativePlaybackPolicy.assessment(
+            fileExtension: "mp4",
+            nativeExtensions: ["mp4", "m4v", "mov"],
+            videoCodecs: ["hev1"]
+        )
+
+        XCTAssertEqual(assessment.routing, .preferExternal)
+        XCTAssertTrue(assessment.prefersExternalEngine)
+        XCTAssertFalse(assessment.requiresExternalEngine)
+    }
+
+    func testNativePlaybackPolicyAllowsNativeAVCInMP4() {
+        let assessment = NativePlaybackPolicy.assessment(
+            fileExtension: "mp4",
+            nativeExtensions: ["mp4", "m4v", "mov"],
+            videoCodecs: ["avc1"]
+        )
+
+        XCTAssertEqual(assessment.routing, .native)
+        XCTAssertFalse(assessment.prefersExternalEngine)
+    }
+
+    func testNativePlaybackPolicyPrefersExternalForNonNativeContainer() {
+        let assessment = NativePlaybackPolicy.assessment(
+            fileExtension: "mkv",
+            nativeExtensions: ["mp4", "m4v", "mov"],
+            videoCodecs: ["avc1"]
+        )
+
+        XCTAssertEqual(assessment.routing, .preferExternal)
+        XCTAssertTrue(assessment.prefersExternalEngine)
+    }
+
+    func testUpdateReleaseSelectorReportsInstalledBuildNewerThanPublishedRelease() throws {
+        let release = try makeRelease(tagName: "v0.1.1")
+        let availability = UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.6")
+
+        XCTAssertEqual(availability, .installedBuildIsNewer(release))
+    }
+
+    func testUpdateReleaseSelectorChoosesHighestPublishedSemverRelease() throws {
+        let releases = try [
+            makeRelease(tagName: "v0.1.9"),
+            makeRelease(tagName: "v0.1.10"),
+            makeRelease(tagName: "v0.2.0-beta", isPrerelease: true),
+            makeRelease(tagName: "v0.3.0", isDraft: true)
+        ]
+
+        let selected = UpdateReleaseSelector.newestPublishedRelease(from: releases)
+        XCTAssertEqual(selected?.tagName, "v0.1.10")
+        XCTAssertEqual(
+            UpdateReleaseSelector.availability(from: releases, currentVersion: "0.1.6"),
+            .updateAvailable(try makeRelease(tagName: "v0.1.10"))
+        )
+    }
+
+    func testUpdateReleaseSelectorHandlesUpToDateAndEmptyReleaseLists() throws {
+        let release = try makeRelease(tagName: "v0.1.6")
+
+        XCTAssertEqual(
+            UpdateReleaseSelector.availability(from: [release], currentVersion: "0.1.6"),
+            .upToDate(release)
+        )
+        XCTAssertEqual(
+            UpdateReleaseSelector.availability(from: [], currentVersion: "0.1.6"),
+            .noPublishedReleases
+        )
     }
 
     func testTeamIdentifierParsing() {
@@ -236,6 +341,20 @@ final class SecurityHelpersTests: XCTestCase {
     func testExternalEngineVerificationTargetUsesContainingApp() {
         let url = URL(fileURLWithPath: "/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib")
         XCTAssertEqual(ExternalMediaEngineTrust.verificationTarget(for: url).path, "/Applications/VLC.app")
+    }
+
+    private func makeRelease(
+        tagName: String,
+        isDraft: Bool = false,
+        isPrerelease: Bool = false
+    ) throws -> GitHubRelease {
+        GitHubRelease(
+            tagName: tagName,
+            htmlURL: try XCTUnwrap(URL(string: "https://github.com/jaysonguglietta/videplayer/releases/tag/\(tagName)")),
+            assets: [],
+            isDraft: isDraft,
+            isPrerelease: isPrerelease
+        )
     }
 
 }
