@@ -52,6 +52,8 @@ final class PlayerViewController: NSViewController {
     private var currentVideoAdjustments = VideoAdjustments()
     private var videoAdjustmentPanel: NSPanel?
     private var videoAdjustmentSliders: [VideoAdjustmentKey: NSSlider] = [:]
+    private var libraryPanel: NSPanel?
+    private weak var libraryFoldersStack: NSStackView?
 
     private let playerView = AVPlayerView()
     private let vlcVideoSurface = NSView()
@@ -129,6 +131,10 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func openFilesPanel(replacePlaylist: Bool) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("File browsing disabled in kiosk mode")
+            return
+        }
         let panel = NSOpenPanel()
         panel.title = replacePlaylist ? "Open Media" : "Add Media"
         panel.message = "Choose video or audio files, folders, subtitles, or playlists of files."
@@ -146,6 +152,10 @@ final class PlayerViewController: NSViewController {
     }
 
     func importPlaylistPanel(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("Playlist import disabled in kiosk mode")
+            return
+        }
         let panel = NSOpenPanel()
         panel.title = "Import Playlist"
         panel.message = "Choose an M3U or M3U8 playlist file."
@@ -164,6 +174,10 @@ final class PlayerViewController: NSViewController {
     }
 
     func exportPlaylistPanel(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("Playlist export disabled in kiosk mode")
+            return
+        }
         guard !playlist.isEmpty else {
             showHUD("Playlist is empty")
             return
@@ -190,6 +204,10 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func openNetworkStreamDialog(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("Streams are managed in kiosk mode")
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Open Network Stream"
         alert.informativeText = "Enter an HTTP, HTTPS, RTSP, or HLS stream URL."
@@ -292,6 +310,11 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func toggleSavePlaybackHistory(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().forceDisablePlaybackHistory else {
+            stateStore.setSavePlaybackHistoryEnabled(false)
+            showHUD("History disabled by policy")
+            return
+        }
         let enabled = !stateStore.savePlaybackHistoryEnabled()
         stateStore.setSavePlaybackHistoryEnabled(enabled)
         if !enabled {
@@ -309,6 +332,11 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func toggleClearHistoryOnQuit(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().forceClearHistoryOnQuit else {
+            stateStore.setClearHistoryOnQuitEnabled(true)
+            showHUD("Clear on quit is managed")
+            return
+        }
         let enabled = !stateStore.clearHistoryOnQuitEnabled()
         stateStore.setClearHistoryOnQuitEnabled(enabled)
         showHUD(enabled ? "History clears on quit" : "History kept after quit")
@@ -319,6 +347,11 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func togglePrivateNetworkStreams(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().forceBlockPrivateNetworkStreams else {
+            stateStore.setPrivateNetworkStreamsEnabled(false)
+            showHUD("Private streams blocked by policy")
+            return
+        }
         let enabled = !stateStore.privateNetworkStreamsEnabled()
         stateStore.setPrivateNetworkStreamsEnabled(enabled)
         showHUD(enabled ? "Private streams allowed" : "Private streams blocked")
@@ -333,6 +366,11 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func toggleExternalMediaEngines(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().forceDisableExternalMediaEngines else {
+            stateStore.setExternalMediaEnginesEnabled(false)
+            showHUD("External engines disabled by policy")
+            return
+        }
         guard AppSecurityPolicy.externalMediaEnginesAvailable else {
             stateStore.setExternalMediaEnginesEnabled(false)
             AppLogger.warning("User tried to enable external engines, but this build does not allow them")
@@ -359,6 +397,10 @@ final class PlayerViewController: NSViewController {
     }
 
     @objc func chooseLibraryFolder(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("Library changes disabled in kiosk mode")
+            return
+        }
         let panel = NSOpenPanel()
         panel.title = "Add Library Folder"
         panel.message = "Choose a folder to scan for media."
@@ -367,9 +409,11 @@ final class PlayerViewController: NSViewController {
         panel.allowsMultipleSelection = false
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        let canPersist = stateStore.savePlaybackHistoryEnabled()
         stateStore.addLibraryFolder(url)
         addMedia(from: [url], replacePlaylist: playlist.isEmpty, autoplay: false)
-        showHUD("Library folder added")
+        rebuildLibraryFolderRows()
+        showHUD(canPersist ? "Library folder added" : "Folder loaded, not saved")
     }
 
     @objc func loadLibraryFolders(_ sender: Any? = nil) {
@@ -380,6 +424,436 @@ final class PlayerViewController: NSViewController {
         }
         addMedia(from: folders, replacePlaylist: true, autoplay: false)
         showHUD("Library loaded")
+    }
+
+    @objc func showLibraryManager(_ sender: Any? = nil) {
+        guard !EnterprisePolicy.snapshot().kioskModeEnabled else {
+            showHUD("Library changes disabled in kiosk mode")
+            return
+        }
+        if let libraryPanel {
+            rebuildLibraryFolderRows()
+            libraryPanel.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
+            styleMask: [.titled, .closable, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Library Folders"
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
+
+        let contentView = NSView()
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+
+        let title = NSTextField(labelWithString: "Media Library")
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+
+        let subtitle = NSTextField(labelWithString: "Save trusted folders, rescan them into the playlist, or remove folders you no longer want remembered.")
+        subtitle.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.maximumNumberOfLines = 2
+        subtitle.lineBreakMode = .byWordWrapping
+
+        let foldersStack = NSStackView()
+        foldersStack.translatesAutoresizingMaskIntoConstraints = false
+        foldersStack.orientation = .vertical
+        foldersStack.spacing = 8
+        foldersStack.alignment = .leading
+        self.libraryFoldersStack = foldersStack
+
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = foldersStack
+        scrollView.heightAnchor.constraint(equalToConstant: 190).isActive = true
+
+        let addButton = NSButton(title: "Add Folder", target: self, action: #selector(addLibraryFolderFromManager(_:)))
+        let loadButton = NSButton(title: "Load All", target: self, action: #selector(loadLibraryFoldersFromManager(_:)))
+        let clearButton = NSButton(title: "Remove All", target: self, action: #selector(clearLibraryFoldersFromManager(_:)))
+        for button in [addButton, loadButton, clearButton] {
+            button.bezelStyle = .rounded
+            button.setAccessibilityLabel(button.title)
+        }
+        let buttonRow = NSStackView(views: [addButton, loadButton, clearButton, NSView()])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 8
+
+        stack.addArrangedSubview(title)
+        stack.addArrangedSubview(subtitle)
+        stack.addArrangedSubview(scrollView)
+        stack.addArrangedSubview(buttonRow)
+        contentView.addSubview(stack)
+        panel.contentView = contentView
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            foldersStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -18)
+        ])
+
+        libraryPanel = panel
+        rebuildLibraryFolderRows()
+        view.window?.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func addLibraryFolderFromManager(_ sender: Any? = nil) {
+        chooseLibraryFolder(sender)
+    }
+
+    @objc private func loadLibraryFoldersFromManager(_ sender: Any? = nil) {
+        loadLibraryFolders(sender)
+    }
+
+    @objc private func clearLibraryFoldersFromManager(_ sender: Any? = nil) {
+        guard !stateStore.loadLibraryFolders().isEmpty else {
+            showHUD("No saved folders")
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove All Library Folders?"
+        alert.informativeText = "This removes saved folder references only. Media files on disk are not deleted."
+        alert.addButton(withTitle: "Remove All")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        stateStore.clearLibraryFolders()
+        rebuildLibraryFolderRows()
+        showHUD("Library folders removed")
+    }
+
+    @objc private func removeLibraryFolderFromManager(_ sender: NSButton) {
+        let folders = stateStore.loadLibraryFolders()
+        guard folders.indices.contains(sender.tag) else { return }
+        stateStore.removeLibraryFolder(folders[sender.tag])
+        rebuildLibraryFolderRows()
+        showHUD("Library folder removed")
+    }
+
+    @objc func showPlaybackDiagnostics(_ sender: Any? = nil) {
+        showHUD("Building diagnostics")
+        Task { [weak self] in
+            let report = await self?.currentPlaybackDiagnosticReport()
+            await MainActor.run {
+                guard let self, let report else { return }
+                self.showTextDialog(title: "Playback Diagnostics", text: report.text, height: 420)
+            }
+        }
+    }
+
+    @objc func showEnterpriseStatus(_ sender: Any? = nil) {
+        let text = PlaybackDiagnostics.enterpriseStatusReport(
+            policy: EnterprisePolicy.snapshot(),
+            licenseStatus: EnterpriseLicenseManager.status()
+        )
+        showTextDialog(title: "Enterprise Status", text: text, height: 440)
+    }
+
+    @objc func showReleaseReadiness(_ sender: Any? = nil) {
+        showTextDialog(
+            title: "Release Readiness",
+            text: ReleaseReadiness.report().text,
+            height: 460
+        )
+    }
+
+    @objc func showMediaEngineDoctor(_ sender: Any? = nil) {
+        showHUD("Checking engines")
+        Task.detached(priority: .utility) {
+            let report = MediaEngineDoctor.report()
+            await MainActor.run { [weak self] in
+                self?.showTextDialog(title: "Playback Engine Doctor", text: report.text, height: 460)
+            }
+        }
+    }
+
+    @objc func exportMDMPolicyProfile(_ sender: Any? = nil) {
+        let panel = NSSavePanel()
+        panel.title = "Export MDM Policy Profile"
+        panel.message = "Save a configuration profile with the current Video Player enterprise policy values."
+        panel.nameFieldStringValue = "Video Player Enterprise Policy.mobileconfig"
+        if let mobileconfigType = UTType(filenameExtension: "mobileconfig") {
+            panel.allowedContentTypes = [mobileconfigType]
+        }
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let profile = MDMProfileBuilder.mobileconfig(policy: EnterprisePolicy.snapshot())
+            try profile.write(to: url, atomically: true, encoding: .utf8)
+            showHUD("MDM profile exported")
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            showTextDialog(title: "MDM Export Failed", text: error.localizedDescription, height: 120)
+        }
+    }
+
+    @objc func showLicenseStatus(_ sender: Any? = nil) {
+        let status = EnterpriseLicenseManager.status()
+        let alert = NSAlert()
+        alert.messageText = status.title
+        alert.informativeText = status.detailLines.joined(separator: "\n")
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Import License")
+        if alert.runModal() == .alertSecondButtonReturn {
+            importEnterpriseLicense(sender)
+        }
+    }
+
+    @objc func createEnterpriseActivationRequest(_ sender: Any? = nil) {
+        let alert = NSAlert()
+        alert.messageText = "Create License Activation Request"
+        alert.informativeText = "Enter the license key and requester email. The request file can be sent to support for offline activation."
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        let keyField = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        keyField.placeholderString = "License key"
+        keyField.setAccessibilityLabel("License key")
+        let emailField = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        emailField.placeholderString = "Requester email"
+        emailField.setAccessibilityLabel("Requester email")
+        stack.addArrangedSubview(keyField)
+        stack.addArrangedSubview(emailField)
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard !keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showHUD("License key required")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Save Activation Request"
+        panel.nameFieldStringValue = "video-player-activation-request.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let request = EnterpriseActivationManager.activationRequest(
+                licenseKey: keyField.stringValue,
+                requestedBy: emailField.stringValue
+            )
+            try EnterpriseActivationManager.writeActivationRequest(request, to: url)
+            showHUD("Activation request saved")
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            showTextDialog(title: "Activation Request Failed", text: error.localizedDescription, height: 120)
+        }
+    }
+
+    @objc func deactivateEnterpriseLicense(_ sender: Any? = nil) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Deactivate Enterprise License?"
+        alert.informativeText = "This removes the local license file from this Mac. It does not contact a licensing server."
+        alert.addButton(withTitle: "Deactivate")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try EnterpriseActivationManager.deactivateLicense()
+            showHUD("License deactivated")
+        } catch {
+            showTextDialog(title: "Deactivate Failed", text: error.localizedDescription, height: 120)
+        }
+    }
+
+    @objc func showAccessibilityGuide(_ sender: Any? = nil) {
+        showTextDialog(title: "Keyboard Shortcuts and Accessibility", text: AccessibilityGuide.text, height: 440)
+    }
+
+    @objc func showLibraryReport(_ sender: Any? = nil) {
+        let report = LibraryCatalog.report(
+            playlist: playlist,
+            records: stateStore.mediaLibraryRecords()
+        )
+        showTextDialog(title: "Library Report", text: report.text, height: 320)
+    }
+
+    @objc func toggleFavoriteForSelectedItems(_ sender: Any? = nil) {
+        let items = selectedPlaylistIndices().map { playlist[$0] }
+        guard !items.isEmpty else {
+            showHUD("Select playlist items first")
+            return
+        }
+
+        for item in items {
+            var record = stateStore.mediaLibraryRecord(for: item)
+            record.isFavorite.toggle()
+            record.updatedAt = Date()
+            stateStore.saveMediaLibraryRecord(record, for: item)
+        }
+        updateMetadataForSelection()
+        showHUD("Favorite updated")
+    }
+
+    func setWatchedForSelectedItems(_ watched: Bool, sender: Any? = nil) {
+        let items = selectedPlaylistIndices().map { playlist[$0] }
+        guard !items.isEmpty else {
+            showHUD("Select playlist items first")
+            return
+        }
+
+        for item in items {
+            var record = stateStore.mediaLibraryRecord(for: item)
+            record.isWatched = watched
+            record.updatedAt = Date()
+            stateStore.saveMediaLibraryRecord(record, for: item)
+        }
+        updateMetadataForSelection()
+        showHUD(watched ? "Marked watched" : "Marked unwatched")
+    }
+
+    @objc func setTagsForSelectedItem(_ sender: Any? = nil) {
+        guard let item = selectedOrCurrentItem else {
+            showHUD("Select a playlist item first")
+            return
+        }
+
+        let record = stateStore.mediaLibraryRecord(for: item)
+        let alert = NSAlert()
+        alert.messageText = "Set Tags"
+        alert.informativeText = "Enter comma-separated tags for \(item.title)."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        input.stringValue = record.tags.joined(separator: ", ")
+        input.setAccessibilityLabel("Media tags")
+        alert.accessoryView = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        var updatedRecord = record
+        updatedRecord.tags = LibraryCatalog.normalizedTags(from: input.stringValue)
+        updatedRecord.updatedAt = Date()
+        stateStore.saveMediaLibraryRecord(updatedRecord, for: item)
+        updateMetadataForSelection()
+        showHUD("Tags updated")
+    }
+
+    @objc func importEnterpriseLicense(_ sender: Any? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Import Enterprise License"
+        panel.message = "Choose a signed Video Player enterprise license JSON file."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.allowedContentTypes = [.json]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try EnterpriseLicenseManager.installLicense(from: url)
+            AppLogger.info("Enterprise license installed from \(url.lastPathComponent)", flush: true)
+            showHUD("License installed")
+            showLicenseStatus(sender)
+        } catch {
+            AppLogger.error("Enterprise license import failed error=\(error.localizedDescription)", flush: true)
+            showTextDialog(
+                title: "License Import Failed",
+                text: error.localizedDescription,
+                height: 120
+            )
+        }
+    }
+
+    @objc func exportSupportBundle(_ sender: Any? = nil) {
+        let policy = EnterprisePolicy.snapshot()
+        let includeLogs = shouldIncludeLogsInSupportBundle(policy: policy)
+        if includeLogs == nil {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Export Support Bundle"
+        panel.message = "Choose a folder where Video Player should create the support bundle."
+        panel.prompt = "Export"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        showHUD("Exporting support bundle")
+        let selectedItem = selectedOrCurrentItem
+
+        Task { [weak self] in
+            guard let self else { return }
+            let report = await self.currentPlaybackDiagnosticReport().text
+            let request = SupportBundleRequest(
+                destinationDirectory: destination,
+                diagnosticReport: report,
+                policy: policy,
+                licenseStatus: EnterpriseLicenseManager.status(),
+                selectedItem: selectedItem,
+                includeLogs: includeLogs == true,
+                redactPaths: policy.redactSupportBundlePaths,
+                now: Date()
+            )
+
+            do {
+                let bundleURL = try SupportBundleExporter.export(request: request)
+                await MainActor.run {
+                    AppLogger.info("Support bundle exported path=\(bundleURL.path)", flush: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([bundleURL])
+                    self.showHUD("Support bundle exported")
+                }
+                if let uploadURL = policy.supportUploadURL {
+                    await self.offerSupportBundleUpload(bundleURL: bundleURL, endpoint: uploadURL)
+                }
+            } catch {
+                await MainActor.run {
+                    AppLogger.error("Support bundle export failed error=\(error.localizedDescription)", flush: true)
+                    self.showTextDialog(title: "Support Bundle Failed", text: error.localizedDescription, height: 120)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func offerSupportBundleUpload(bundleURL: URL, endpoint: URL) async {
+        let alert = NSAlert()
+        alert.messageText = "Upload Support Bundle?"
+        alert.informativeText = "Your organization configured a support upload endpoint:\n\(endpoint.absoluteString)"
+        alert.addButton(withTitle: "Upload")
+        alert.addButton(withTitle: "Skip")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        showHUD("Uploading support bundle")
+        do {
+            let result = try await SupportBundleUploader.upload(bundleDirectory: bundleURL, endpoint: endpoint)
+            if result.succeeded {
+                showHUD("Support bundle uploaded")
+            } else {
+                showTextDialog(
+                    title: "Upload Failed",
+                    text: "Server returned HTTP \(result.statusCode).\n\n\(result.responseText)",
+                    height: 180
+                )
+            }
+        } catch {
+            showTextDialog(title: "Upload Failed", text: error.localizedDescription, height: 160)
+        }
     }
 
     @objc func toggleMiniPlayer(_ sender: Any? = nil) {
@@ -2405,7 +2879,19 @@ final class PlayerViewController: NSViewController {
             updateNowPlaying(title: item.title, detail: "Restored playlist")
             updateMetadata(for: item)
         }
+        loadManagedKioskPlaylistIfNeeded()
         refreshPlaylistActionStates()
+    }
+
+    private func loadManagedKioskPlaylistIfNeeded() {
+        let policy = EnterprisePolicy.snapshot()
+        guard policy.kioskModeEnabled, let url = policy.kioskPlaylistURL else { return }
+        AppLogger.info("Loading managed kiosk playlist url=\(url.absoluteString)", flush: true)
+        addMedia(from: [url], replacePlaylist: true, autoplay: false)
+        if let window = view.window {
+            window.toggleFullScreen(nil)
+        }
+        showHUD("Kiosk playlist loaded")
     }
 
     private func savePlaylistState() {
@@ -2511,6 +2997,12 @@ final class PlayerViewController: NSViewController {
                 let extraDetails = metadata.extraDetails.isEmpty
                     ? ""
                     : "\n\n\(metadata.extraDetails.joined(separator: "\n"))"
+                let libraryRecord = self.stateStore.mediaLibraryRecord(for: item)
+                let libraryDetails = """
+                Favorite: \(libraryRecord.isFavorite ? "Yes" : "No")
+                Watched: \(libraryRecord.isWatched ? "Yes" : "No")
+                Tags: \(libraryRecord.tags.isEmpty ? "--" : libraryRecord.tags.joined(separator: ", "))
+                """
                 self.metadataTextView.stringValue = """
                 \(metadata.title)
 
@@ -2522,15 +3014,156 @@ final class PlayerViewController: NSViewController {
                 Resume: \(metadata.savedPosition)
 
                 \(metadata.location)
+                \(libraryDetails)
                 \(extraDetails)
                 """
             }
         }
     }
 
+    private func rebuildLibraryFolderRows() {
+        guard let libraryFoldersStack else { return }
+        libraryFoldersStack.arrangedSubviews.forEach {
+            libraryFoldersStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        if !stateStore.savePlaybackHistoryEnabled() {
+            let label = libraryMessageLabel(
+                "Library folders are not saved while playback history is off or disabled by policy."
+            )
+            libraryFoldersStack.addArrangedSubview(label)
+            return
+        }
+
+        let folders = stateStore.loadLibraryFolders()
+        guard !folders.isEmpty else {
+            libraryFoldersStack.addArrangedSubview(libraryMessageLabel("No library folders saved."))
+            return
+        }
+
+        for (index, folder) in folders.enumerated() {
+            let label = NSTextField(labelWithString: folder.path)
+            label.font = .systemFont(ofSize: 12, weight: .regular)
+            label.lineBreakMode = .byTruncatingMiddle
+            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            label.setAccessibilityLabel("Library folder \(index + 1)")
+            label.setAccessibilityValue(folder.path)
+
+            let removeButton = iconButton(
+                systemName: "minus.circle",
+                description: "Remove library folder",
+                action: #selector(removeLibraryFolderFromManager(_:))
+            )
+            removeButton.tag = index
+
+            let row = NSStackView(views: [label, removeButton])
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 8
+            row.widthAnchor.constraint(equalTo: libraryFoldersStack.widthAnchor).isActive = true
+            libraryFoldersStack.addArrangedSubview(row)
+        }
+    }
+
+    private func libraryMessageLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.maximumNumberOfLines = 3
+        label.lineBreakMode = .byWordWrapping
+        return label
+    }
+
+    private func shouldIncludeLogsInSupportBundle(policy: EnterprisePolicySnapshot) -> Bool? {
+        guard !policy.disableSupportBundleLogExport else {
+            showHUD("Logs omitted by policy")
+            return false
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Include Diagnostic Logs?"
+        alert.informativeText = policy.redactSupportBundlePaths
+            ? "The support bundle can include the app log with home folders, volume paths, stream credentials, and tokens redacted."
+            : "The support bundle can include the app log. Your current policy does not redact local paths."
+        alert.addButton(withTitle: "Include Logs")
+        alert.addButton(withTitle: "No Logs")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return true
+        case .alertSecondButtonReturn:
+            return false
+        default:
+            return nil
+        }
+    }
+
+    @MainActor
+    private func currentPlaybackDiagnosticReport() async -> PlaybackDiagnosticReport {
+        let item = selectedOrCurrentItem
+        let assessment: NativePlaybackAssessment?
+        if let item, item.url.isFileURL {
+            assessment = await NativePlaybackPolicy.assessment(for: item, nativeExtensions: nativeExtensions)
+        } else {
+            assessment = item == nil ? nil : .native
+        }
+
+        let resolvedAddresses = item.flatMap {
+            networkStreamResolutions[$0.url.absoluteString]
+        } ?? []
+
+        return PlaybackDiagnostics.report(input: PlaybackDiagnosticInput(
+            item: item,
+            nativeAssessment: assessment,
+            externalEnginesAvailable: AppSecurityPolicy.externalMediaEnginesAvailable,
+            externalEnginesEnabled: stateStore.externalMediaEnginesEnabled(),
+            vlcAvailable: vlcBridge.isAvailable,
+            mpvAvailable: mpvBridge.isAvailable,
+            policy: EnterprisePolicy.snapshot(),
+            licenseStatus: EnterpriseLicenseManager.status(),
+            resolvedStreamAddresses: resolvedAddresses
+        ))
+    }
+
+    private func showTextDialog(title: String, text: String, height: CGFloat) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.addButton(withTitle: "OK")
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 660, height: height))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.string = text
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.textColor = .labelColor
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.bounds.width, height: .greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.runModal()
+    }
+
     private var currentItem: MediaItem? {
         guard let currentIndex, playlist.indices.contains(currentIndex) else { return nil }
         return playlist[currentIndex]
+    }
+
+    private var selectedOrCurrentItem: MediaItem? {
+        if let index = playlistIndex(forVisibleRow: tableView.selectedRow) {
+            return playlist[index]
+        }
+        return currentItem
     }
 
     private func rememberValidatedNetworkStream(_ stream: NetworkStreamValidator.ValidatedStream) {
@@ -2914,9 +3547,13 @@ extension PlayerViewController: DropViewDelegate {
 
 extension PlayerViewController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        guard notification.object as? NSPanel === videoAdjustmentPanel else { return }
-        videoAdjustmentPanel = nil
-        videoAdjustmentSliders = [:]
+        if notification.object as? NSPanel === videoAdjustmentPanel {
+            videoAdjustmentPanel = nil
+            videoAdjustmentSliders = [:]
+        } else if notification.object as? NSPanel === libraryPanel {
+            libraryPanel = nil
+            libraryFoldersStack = nil
+        }
     }
 }
 

@@ -11,6 +11,7 @@ final class PlaybackStateStore {
         static let libraryFolders = "libraryFolders"
         static let audioPreset = "audioPreset"
         static let playlistSortMode = "playlistSortMode"
+        static let mediaLibraryRecords = "mediaLibraryRecords"
     }
 
     private let defaults: UserDefaults
@@ -113,6 +114,37 @@ final class PlaybackStateStore {
         defaults.set(Array(values.prefix(8)), forKey: Key.libraryFolders)
     }
 
+    func removeLibraryFolder(_ url: URL) {
+        var values = defaults.stringArray(forKey: Key.libraryFolders) ?? []
+        values.removeAll { $0 == url.absoluteString }
+        defaults.set(values, forKey: Key.libraryFolders)
+    }
+
+    func clearLibraryFolders() {
+        defaults.removeObject(forKey: Key.libraryFolders)
+    }
+
+    func mediaLibraryRecord(for item: MediaItem) -> MediaLibraryRecord {
+        mediaLibraryRecords()[MediaPersistence.storageString(for: item.url)] ?? .empty
+    }
+
+    func saveMediaLibraryRecord(_ record: MediaLibraryRecord, for item: MediaItem) {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return }
+        var records = mediaLibraryRecords()
+        records[MediaPersistence.storageString(for: item.url)] = record
+        saveMediaLibraryRecords(records)
+    }
+
+    func mediaLibraryRecords() -> [String: MediaLibraryRecord] {
+        guard PrivacySettings.savePlaybackHistory(defaults: defaults) else { return [:] }
+        guard let data = defaults.data(forKey: Key.mediaLibraryRecords),
+              let records = try? JSONDecoder().decode([String: MediaLibraryRecord].self, from: data)
+        else {
+            return [:]
+        }
+        return records
+    }
+
     func loadLibraryFolders() -> [URL] {
         guard PrivacySettings.savePlaybackHistory(defaults: defaults) else {
             return []
@@ -193,6 +225,12 @@ final class PlaybackStateStore {
         defaults.removeObject(forKey: Key.positions)
         defaults.removeObject(forKey: Key.recentMedia)
         defaults.removeObject(forKey: Key.libraryFolders)
+        defaults.removeObject(forKey: Key.mediaLibraryRecords)
+    }
+
+    private func saveMediaLibraryRecords(_ records: [String: MediaLibraryRecord]) {
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        defaults.set(data, forKey: Key.mediaLibraryRecords)
     }
 
     private func sanitizedURLStrings(forKey key: String) -> [String] {

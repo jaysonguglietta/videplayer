@@ -42,9 +42,10 @@ export RELEASE_APPROVAL="v0.1.8"
 6. Keep the original private key file offline or in a secure secret store after adding it to Keychain; do not keep it in synced folders.
 7. Keep `ENABLE_EXTERNAL_ENGINES` unset for the default sandboxed commercial DMG.
 8. If you intentionally ship an advanced external-engine build, set `ENABLE_EXTERNAL_ENGINES=1` and set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust.
-9. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
-10. Mention VLC/mpv only as optional user-installed integrations.
-11. Review codec patent/licensing obligations for the formats you market.
+9. If you use offline enterprise licensing, set `ENTERPRISE_LICENSE_PUBLIC_KEY` during packaging and keep the corresponding private signing key outside the repo.
+10. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
+11. Mention VLC/mpv only as optional user-installed integrations.
+12. Review codec patent/licensing obligations for the formats you market.
 
 ## Optional User-Installed Engines
 
@@ -59,8 +60,25 @@ The default commercial build does not load VLC/libVLC or mpv. An advanced build 
 - Local update publishing uses a Keychain-backed signing key by default, requires explicit `RELEASE_APPROVAL`, and uploads release provenance beside the DMG and signed manifest.
 - The updater verifies the signed manifest, SHA-256 checksum, Developer ID Team ID, and Gatekeeper assessment before opening an update.
 - Private/local network streams, including DNS names resolving to private/local addresses, are blocked by default.
+- Managed preferences can disable update checks, external engines, private streams, support-bundle logs, playback history, and can restrict approved stream host suffixes.
+- Support bundles redact home-folder paths, volume paths, stream credentials, and common URL tokens by default.
+- Optional support bundle uploads are controlled by `EnterpriseSupportUploadURL`; do not configure it unless the receiving endpoint is authenticated, HTTPS-only, access-controlled, and has retention rules.
+- Kiosk mode can lock down file browsing, stream entry, playlist import/export, and library edits for controlled environments.
+- Enterprise license files are verified with a packaged P-256 public key when configured; otherwise they are displayed as operational records only.
 - Playback history is off by default; saved playback history and saved library folders can be enabled, cleared immediately, or cleared on quit.
 - Recursive folder scans are capped to reduce accidental denial of service.
+
+## Enterprise Selling Checklist
+
+Before selling to managed customers:
+
+- Provide [Enterprise deployment guide](ENTERPRISE_DEPLOYMENT.md) and [QA media test plan](QA_MEDIA_TEST_PLAN.md) with the release.
+- Decide whether updates are handled by GitHub signed manifests or disabled through MDM and deployed by the customer's device management system.
+- Treat `EnterpriseUpdateChannel=sparkle` as a migration/readiness setting until Sparkle 2 and its sandbox services are actually bundled into the app.
+- Decide whether license status is informational or enforced with a signed offline license public key.
+- Confirm support bundle redaction stays on by default.
+- Document exactly whether the customer is buying the default sandboxed native-only build or an advanced external-engine build.
+- Run Help > Release Readiness and Help > Playback Engine Doctor in the final built app before handing it to a customer.
 
 ## If You Later Bundle Third-Party Engines
 

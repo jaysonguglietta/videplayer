@@ -26,6 +26,10 @@ final class VLCBridge {
         player != nil
     }
 
+    static func candidateLibraryPaths() -> [String] {
+        DynamicLibVLC.candidateLibraryPaths()
+    }
+
     var currentTime: Double {
         guard let api, let player else { return 0 }
         return Double(api.getTime(player)) / 1000

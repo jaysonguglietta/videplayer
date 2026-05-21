@@ -7,6 +7,29 @@ final class UpdateChecker {
 
     func checkForUpdates(presentingWindow: NSWindow?) {
         guard activeTask == nil else { return }
+        let policy = EnterprisePolicy.snapshot()
+        guard !policy.disableUpdateChecks, policy.updateChannel != "mdm" else {
+            AppLogger.info("Update check blocked by enterprise policy", flush: true)
+            showStatus(
+                "Updates are managed by your organization.",
+                detail: "Update checks are disabled by enterprise policy.",
+                presentingWindow: presentingWindow
+            )
+            return
+        }
+
+        if policy.updateChannel == "sparkle" {
+            showStatus(
+                "Sparkle update channel is configured.",
+                detail: """
+                Appcast: \(policy.sparkleAppcastURLString ?? "Not configured")
+
+                This build is Sparkle-ready for admin reporting, but it does not bundle Sparkle 2 yet. The signed GitHub manifest updater remains active until the Sparkle framework and sandbox services are added to the app bundle.
+                """,
+                presentingWindow: presentingWindow
+            )
+            return
+        }
 
         AppLogger.info("Update check started url=\(releasesURL.absoluteString)", flush: true)
         var request = URLRequest(url: releasesURL)

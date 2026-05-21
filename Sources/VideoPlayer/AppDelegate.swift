@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogger.info("Application launched version=\(OpenSourceNotices.appVersion) log=\(AppLogger.logFileURL.path)", flush: true)
+        HangWatchdog.start()
         let controller = PlayerWindowController()
         playerWindowController = controller
         controller.showWindow(nil)
@@ -84,6 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func loadLibraryFolders(_ sender: Any?) {
         playerViewController?.loadLibraryFolders(sender)
+    }
+
+    @objc private func manageLibraryFolders(_ sender: Any?) {
+        playerViewController?.showLibraryManager(sender)
     }
 
     @objc private func loadSubtitle(_ sender: Any?) {
@@ -233,8 +238,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
+        let policy = EnterprisePolicy.snapshot()
+        guard !policy.disableUpdateChecks else {
+            AppLogger.info("Update check blocked by enterprise policy", flush: true)
+            showTextDialog(
+                title: "Updates Managed by Your Organization",
+                text: "Update checks are disabled by enterprise policy. Contact your administrator for deployment updates.",
+                height: 120
+            )
+            return
+        }
         AppLogger.info("User requested update check")
         updateChecker.checkForUpdates(presentingWindow: playerWindowController?.window)
+    }
+
+    @objc private func showEnterpriseStatus(_ sender: Any?) {
+        playerViewController?.showEnterpriseStatus(sender)
+    }
+
+    @objc private func showReleaseReadiness(_ sender: Any?) {
+        playerViewController?.showReleaseReadiness(sender)
+    }
+
+    @objc private func showMediaEngineDoctor(_ sender: Any?) {
+        playerViewController?.showMediaEngineDoctor(sender)
+    }
+
+    @objc private func exportMDMPolicyProfile(_ sender: Any?) {
+        playerViewController?.exportMDMPolicyProfile(sender)
+    }
+
+    @objc private func showPlaybackDiagnostics(_ sender: Any?) {
+        playerViewController?.showPlaybackDiagnostics(sender)
+    }
+
+    @objc private func exportSupportBundle(_ sender: Any?) {
+        playerViewController?.exportSupportBundle(sender)
+    }
+
+    @objc private func showLicenseStatus(_ sender: Any?) {
+        playerViewController?.showLicenseStatus(sender)
+    }
+
+    @objc private func importLicense(_ sender: Any?) {
+        playerViewController?.importEnterpriseLicense(sender)
+    }
+
+    @objc private func createActivationRequest(_ sender: Any?) {
+        playerViewController?.createEnterpriseActivationRequest(sender)
+    }
+
+    @objc private func deactivateLicense(_ sender: Any?) {
+        playerViewController?.deactivateEnterpriseLicense(sender)
+    }
+
+    @objc private func showAccessibilityGuide(_ sender: Any?) {
+        playerViewController?.showAccessibilityGuide(sender)
+    }
+
+    @objc private func showLibraryReport(_ sender: Any?) {
+        playerViewController?.showLibraryReport(sender)
+    }
+
+    @objc private func toggleFavorite(_ sender: Any?) {
+        playerViewController?.toggleFavoriteForSelectedItems(sender)
+    }
+
+    @objc private func markWatched(_ sender: Any?) {
+        playerViewController?.setWatchedForSelectedItems(true, sender: sender)
+    }
+
+    @objc private func markUnwatched(_ sender: Any?) {
+        playerViewController?.setWatchedForSelectedItems(false, sender: sender)
+    }
+
+    @objc private func setTags(_ sender: Any?) {
+        playerViewController?.setTagsForSelectedItem(sender)
     }
 
     @objc private func openProjectRepository(_ sender: Any?) {
@@ -316,6 +395,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let loadLibraryItem = NSMenuItem(title: "Load Library Folders", action: #selector(loadLibraryFolders(_:)), keyEquivalent: "l")
         loadLibraryItem.target = self
         fileMenu.addItem(loadLibraryItem)
+        let manageLibraryItem = NSMenuItem(title: "Manage Library Folders...", action: #selector(manageLibraryFolders(_:)), keyEquivalent: "")
+        manageLibraryItem.target = self
+        fileMenu.addItem(manageLibraryItem)
+        let libraryReportItem = NSMenuItem(title: "Library Report...", action: #selector(showLibraryReport(_:)), keyEquivalent: "")
+        libraryReportItem.target = self
+        fileMenu.addItem(libraryReportItem)
+        fileMenu.addItem(.separator())
+        let favoriteItem = NSMenuItem(title: "Toggle Favorite", action: #selector(toggleFavorite(_:)), keyEquivalent: "")
+        favoriteItem.target = self
+        fileMenu.addItem(favoriteItem)
+        let watchedItem = NSMenuItem(title: "Mark Watched", action: #selector(markWatched(_:)), keyEquivalent: "")
+        watchedItem.target = self
+        fileMenu.addItem(watchedItem)
+        let unwatchedItem = NSMenuItem(title: "Mark Unwatched", action: #selector(markUnwatched(_:)), keyEquivalent: "")
+        unwatchedItem.target = self
+        fileMenu.addItem(unwatchedItem)
+        let tagsItem = NSMenuItem(title: "Set Tags...", action: #selector(setTags(_:)), keyEquivalent: "")
+        tagsItem.target = self
+        fileMenu.addItem(tagsItem)
         fileMenu.addItem(.separator())
         let subtitleItem = NSMenuItem(title: "Load Subtitle...", action: #selector(loadSubtitle(_:)), keyEquivalent: "s")
         subtitleItem.target = self
@@ -433,6 +531,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let helpUpdateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         helpUpdateItem.target = self
         helpMenu.addItem(helpUpdateItem)
+        let diagnosticsItem = NSMenuItem(title: "Playback Diagnostics...", action: #selector(showPlaybackDiagnostics(_:)), keyEquivalent: "")
+        diagnosticsItem.target = self
+        helpMenu.addItem(diagnosticsItem)
+        let engineDoctorItem = NSMenuItem(title: "Playback Engine Doctor...", action: #selector(showMediaEngineDoctor(_:)), keyEquivalent: "")
+        engineDoctorItem.target = self
+        helpMenu.addItem(engineDoctorItem)
+        let releaseReadinessItem = NSMenuItem(title: "Release Readiness...", action: #selector(showReleaseReadiness(_:)), keyEquivalent: "")
+        releaseReadinessItem.target = self
+        helpMenu.addItem(releaseReadinessItem)
+        let enterpriseStatusItem = NSMenuItem(title: "Enterprise Status...", action: #selector(showEnterpriseStatus(_:)), keyEquivalent: "")
+        enterpriseStatusItem.target = self
+        helpMenu.addItem(enterpriseStatusItem)
+        let mdmProfileItem = NSMenuItem(title: "Export MDM Policy Profile...", action: #selector(exportMDMPolicyProfile(_:)), keyEquivalent: "")
+        mdmProfileItem.target = self
+        helpMenu.addItem(mdmProfileItem)
+        let supportBundleItem = NSMenuItem(title: "Export Support Bundle...", action: #selector(exportSupportBundle(_:)), keyEquivalent: "")
+        supportBundleItem.target = self
+        helpMenu.addItem(supportBundleItem)
+        helpMenu.addItem(.separator())
+        let licenseStatusItem = NSMenuItem(title: "License Status...", action: #selector(showLicenseStatus(_:)), keyEquivalent: "")
+        licenseStatusItem.target = self
+        helpMenu.addItem(licenseStatusItem)
+        let importLicenseItem = NSMenuItem(title: "Import Enterprise License...", action: #selector(importLicense(_:)), keyEquivalent: "")
+        importLicenseItem.target = self
+        helpMenu.addItem(importLicenseItem)
+        let activationItem = NSMenuItem(title: "Create License Activation Request...", action: #selector(createActivationRequest(_:)), keyEquivalent: "")
+        activationItem.target = self
+        helpMenu.addItem(activationItem)
+        let deactivateItem = NSMenuItem(title: "Deactivate Enterprise License", action: #selector(deactivateLicense(_:)), keyEquivalent: "")
+        deactivateItem.target = self
+        helpMenu.addItem(deactivateItem)
+        helpMenu.addItem(.separator())
+        let accessibilityItem = NSMenuItem(title: "Keyboard Shortcuts and Accessibility...", action: #selector(showAccessibilityGuide(_:)), keyEquivalent: "")
+        accessibilityItem.target = self
+        helpMenu.addItem(accessibilityItem)
+        helpMenu.addItem(.separator())
         let helpLicensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
         helpLicensesItem.target = self
         helpMenu.addItem(helpLicensesItem)
@@ -452,11 +586,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateSecurityMenuStates() {
+        let policy = EnterprisePolicy.snapshot()
         externalEnginesMenuItem?.state = playerViewController?.externalMediaEnginesEnabled() == true ? .on : .off
         externalEnginesMenuItem?.isEnabled = playerViewController?.externalMediaEnginesAvailable() == true
+            && !policy.forceDisableExternalMediaEngines
         privateStreamsMenuItem?.state = playerViewController?.privateNetworkStreamsEnabled() == true ? .on : .off
+        privateStreamsMenuItem?.isEnabled = !policy.forceBlockPrivateNetworkStreams
         saveHistoryMenuItem?.state = playerViewController?.savePlaybackHistoryEnabled() == true ? .on : .off
+        saveHistoryMenuItem?.isEnabled = !policy.forceDisablePlaybackHistory
         clearHistoryOnQuitMenuItem?.state = playerViewController?.clearHistoryOnQuitEnabled() == true ? .on : .off
+        clearHistoryOnQuitMenuItem?.isEnabled = !policy.forceClearHistoryOnQuit
     }
 
     private func rebuildOpenRecentMenu() {

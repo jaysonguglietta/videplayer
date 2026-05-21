@@ -11,7 +11,8 @@ enum NetworkStreamValidator {
 
     static func validatedURL(
         from value: String,
-        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams()
+        allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        allowedHostSuffixes: [String]? = nil
     ) -> URL? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -21,6 +22,11 @@ enum NetworkStreamValidator {
             let host = url.host,
             !host.isEmpty
         else {
+            return nil
+        }
+
+        let policyHostSuffixes = allowedHostSuffixes ?? EnterprisePolicy.snapshot().allowedStreamHostSuffixes
+        guard EnterprisePolicySnapshot.host(host, matchesAllowedSuffixes: policyHostSuffixes) else {
             return nil
         }
 
@@ -34,11 +40,13 @@ enum NetworkStreamValidator {
     static func validatedURLResolvingHost(
         from value: String,
         allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        allowedHostSuffixes: [String]? = nil,
         resolvedAddressesForHost: @escaping (String) async -> [String]? = SystemNetworkAddressResolver.resolvedAddresses
     ) async -> URL? {
         await validatedStream(
             from: value,
             allowPrivateNetworkHosts: allowPrivateNetworkHosts,
+            allowedHostSuffixes: allowedHostSuffixes,
             resolvedAddressesForHost: resolvedAddressesForHost
         )?.url
     }
@@ -46,9 +54,14 @@ enum NetworkStreamValidator {
     static func validatedStream(
         from value: String,
         allowPrivateNetworkHosts: Bool = PrivacySettings.allowPrivateNetworkStreams(),
+        allowedHostSuffixes: [String]? = nil,
         resolvedAddressesForHost: @escaping (String) async -> [String]? = SystemNetworkAddressResolver.resolvedAddresses
     ) async -> ValidatedStream? {
-        guard let url = validatedURL(from: value, allowPrivateNetworkHosts: allowPrivateNetworkHosts) else {
+        guard let url = validatedURL(
+            from: value,
+            allowPrivateNetworkHosts: allowPrivateNetworkHosts,
+            allowedHostSuffixes: allowedHostSuffixes
+        ) else {
             return nil
         }
 

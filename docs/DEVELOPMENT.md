@@ -31,6 +31,16 @@ Network stream validation resolves public hosts off the main thread before addin
 
 `AppLogger` writes a rotating diagnostic log to the user's Library Logs folder. The app exposes Video Player > Reveal Log File and Help > Reveal Log File. Log playback routing, codec decisions, external-engine validation, VLC/mpv startup, update checks, and verification failures before risky or blocking operations. Security validation subprocesses have a 10-second timeout so `codesign` or `spctl` cannot leave the app indefinitely unresponsive.
 
+Enterprise operations code is intentionally split into testable helpers:
+
+- `EnterprisePolicy` reads managed preferences and exposes a snapshot used by privacy, stream, update, support, and external-engine flows.
+- `PlaybackDiagnostics` builds support-ready playback and enterprise status reports without AppKit dependencies.
+- `SupportBundleExporter` writes support reports, playback diagnostics, and optional redacted logs.
+- `SupportBundleUploader` performs optional policy-configured multipart uploads after bundle export.
+- `EnterpriseLicenseManager` imports license JSON files and verifies P-256 signatures when `VPEnterpriseLicensePublicKey` is configured.
+- `EnterpriseActivationManager` creates offline activation request JSON files and removes local licenses.
+- `ReleaseReadiness`, `MediaEngineDoctor`, `MDMProfileBuilder`, and `LibraryCatalog` keep advanced admin checks testable outside AppKit.
+
 `PlaylistWorkflowSmokeTests` covers the UI-facing playlist workflows that can run without launching AppKit: search, sort, M3U8 export, skipped-entry reporting, relative path resolution, drag reorder math, and multi-row removal. Manual QA should still exercise the built app with local media, stream URLs, and mixed-result M3U8 files before release.
 
 ## Build the App Bundle
@@ -97,6 +107,7 @@ export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
+export ENTERPRISE_LICENSE_PUBLIC_KEY="base64-x963-p256-public-key-if-used"
 ```
 
 `Scripts/build_app.sh` signs the app with hardened runtime and uses the sandboxed `Packaging/VideoPlayer.entitlements` by default. `Scripts/build_release_dmg.sh` signs the DMG, submits it to `notarytool`, staples the notarization ticket, and validates the staple. Direct-distribution builds require Developer ID signing and notarization by default. Use `DEVELOPMENT_BUILD=1` only for local ad-hoc testing.
@@ -142,6 +153,28 @@ Playback positions, playlist URLs, selected playlist item, recent media, saved l
 ## Network Stream Policy
 
 `NetworkStreamValidator` accepts only HTTP, HTTPS, RTSP, and RTSPS. Loopback, link-local, multicast, RFC1918, CGNAT, benchmark ranges, `.local`, `localhost`, single-label hosts, and DNS names resolving to private/local addresses are blocked by default to reduce client-side SSRF and local-network probing risk. DNS checks run off the main UI path with a short timeout and fail closed when private network streams are disabled. Users can enable Privacy > Allow Private Network Streams for trusted LAN cameras or local streams.
+
+Managed deployments can also set `EnterpriseAllowedStreamHostSuffixes` to restrict stream playback to approved host suffixes. This restriction is applied before DNS validation and applies to Open Network Stream, playlist import, and playback revalidation.
+
+## Enterprise Features
+
+See [Enterprise deployment guide](ENTERPRISE_DEPLOYMENT.md) for the admin-facing workflow. In code:
+
+- Help > Enterprise Status calls `PlaybackDiagnostics.enterpriseStatusReport`.
+- Help > Release Readiness calls `ReleaseReadiness.report`.
+- Help > Playback Diagnostics calls `PlaybackDiagnostics.report` for the selected or current media item.
+- Help > Playback Engine Doctor calls `MediaEngineDoctor.report`.
+- Help > Export MDM Policy Profile calls `MDMProfileBuilder.mobileconfig`.
+- Help > Export Support Bundle calls `SupportBundleExporter.export`.
+- Optional support uploads call `SupportBundleUploader.upload` only when `EnterpriseSupportUploadURL` is configured.
+- Help > License Status and Help > Import Enterprise License call `EnterpriseLicenseManager`.
+- Help > Create License Activation Request and Help > Deactivate Enterprise License call `EnterpriseActivationManager`.
+- File > Manage Library Folders uses `PlaybackStateStore` and remains privacy-aware because saved folders are treated as playback history.
+- File > Library Report and library curation actions use `LibraryCatalog` and persisted `MediaLibraryRecord` values.
+
+Build-time license verification is optional. Set `ENTERPRISE_LICENSE_PUBLIC_KEY` when packaging a customer build that should cryptographically verify offline license files. Without a configured public key, imported licenses are displayed as unverified operational records rather than treated as signed entitlements.
+
+`EnterpriseUpdateChannel=sparkle` is intentionally Sparkle-ready rather than a full framework migration. The current production updater remains the signed GitHub manifest flow until Sparkle 2, appcast signing, and sandbox XPC services are bundled and validated end to end.
 
 ## Optional LibVLC Features
 

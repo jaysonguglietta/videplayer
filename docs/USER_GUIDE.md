@@ -8,7 +8,9 @@ Use Open Stream in the empty player or File > Open Network Stream for public str
 
 Opened media is selected in the left pane before playback starts. The inspector shows title, type, file size, duration, video dimensions, modified date, saved resume point, location, and extra metadata from a user-installed VLC copy when available. Press Space, K, the play button, or double-click the playlist row to start.
 
-Use File > Open Recent to reload a recently played file or stream when playback history is enabled. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders.
+Use File > Open Recent to reload a recently played file or stream when playback history is enabled. Use File > Add Library Folder to save a folder, then File > Load Library Folders to rebuild the playlist from saved folders. Use File > Manage Library Folders to review saved folders, rescan all folders, remove one folder, or remove all saved folder references. Saved folders require playback history to be enabled and are not persisted when history is off or disabled by policy.
+
+Use File > Toggle Favorite, Mark Watched, Mark Unwatched, and Set Tags to curate a playlist/library. Use File > Library Report to summarize item counts, streams, missing local files, favorites, watched items, and tags.
 
 Use the search field above the playlist to filter by title, file extension, path, or stream URL. Use the sort menu to keep the current order or sort by title, media type, or location. The inspector tells you when nothing matches the current search.
 
@@ -47,6 +49,10 @@ Use Playback > Enable External VLC/mpv Engines to opt in to separately installed
 If a local file starts with sound but no picture under Apple-native playback, Video Player stops the native attempt and either falls back to a trusted VLC/mpv engine or shows a codec message explaining that the current build cannot render that video stream.
 
 Use View > Video Adjustments to change brightness, contrast, saturation, hue, and gamma for video backed by a trusted user-installed VLC copy. Use View > Reset Video Adjustments to return to the original picture.
+
+Use Help > Playback Diagnostics when a file plays audio-only, fails to start, or appears to need VLC/mpv. The diagnostic report shows the selected media item, native playback assessment, detected video codecs, external-engine availability, enterprise policy, license status, stream DNS details, and recommended next action.
+
+Use Help > Playback Engine Doctor to inspect VLC/libVLC and mpv candidates. It shows whether each engine path exists, is readable/executable, passes trust checks, and reports its Team ID when available.
 
 ## Volume Boost
 
@@ -95,6 +101,10 @@ Privacy > Save Playback History is off by default. When you enable it, the app r
 
 Use Privacy > Save Playback History to turn history saving on or off. When it is off, playlists, recent media, resume positions, and saved library folders are not persisted. Use Privacy > Clear History on Quit to clear playback history when the app closes. Use Privacy > Clear All Playback History to remove playlist, recent media, resume positions, and saved library folders immediately.
 
+Managed enterprise policy can disable playback history, force clear-on-quit, block private/local streams, disable external VLC/mpv engines, disable update checks, restrict stream hosts, and control support bundle log export. When a setting is managed, the menu item is disabled or the action reports that it is controlled by policy.
+
+Kiosk policy can disable file browsing, playlist import/export, manual stream entry, and library edits. In kiosk mode, administrators can provide a managed playlist URL so the app opens to approved content.
+
 ## On-Screen HUD
 
 The player briefly shows an on-screen HUD for common actions such as seeking, volume changes, speed changes, subtitle loading, and resume playback.
@@ -106,5 +116,11 @@ Use Video Player > Check for Updates or Help > Check for Updates to check the Gi
 Use Video Player > About Video Player for app details. Use Video Player > Open Source Licenses or Help > Open Source Licenses to view notices for Video Player and optional external VLC/mpv integrations.
 
 Use Video Player > Reveal Log File or Help > Reveal Log File when playback freezes, an update check fails, or an external engine is rejected. The log records the playback route, detected codecs, trusted-engine validation commands, VLC/mpv startup, update-check results, and verification failures.
+
+Use Help > Export Support Bundle to create a support folder with a support report, playback diagnostics, and optionally the app log. Support bundles redact home-folder paths, volume paths, stream credentials, and common URL tokens by default unless enterprise policy turns redaction off.
+
+Use Help > Release Readiness to check whether the current build is ready for customer distribution. Use Help > Export MDM Policy Profile to save a `.mobileconfig` profile for managed deployments. Use Help > Enterprise Status to review the installed version, update readiness, trusted external-engine configuration, active managed preferences, and enterprise license status. Use Help > License Status or Help > Import Enterprise License when your organization provides a license JSON file. Use Help > Create License Activation Request when support asks for an offline activation request.
+
+Use Help > Keyboard Shortcuts and Accessibility to review keyboard workflows and support-facing accessibility notes.
 
 Video Player's own app source code is MIT licensed. The default distributed app is sandboxed and does not bundle or load VLC/libVLC, mpv, FFmpeg, or other third-party media engines. Optional advanced user-installed integrations keep their own upstream license terms.

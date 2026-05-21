@@ -83,36 +83,46 @@ enum PrivacySettings {
     }
 
     static func savePlaybackHistory(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: Key.savePlaybackHistory) as? Bool ?? false
+        guard !EnterprisePolicy.snapshot(defaults: defaults).forceDisablePlaybackHistory else { return false }
+        return defaults.object(forKey: Key.savePlaybackHistory) as? Bool ?? false
     }
 
     static func setSavePlaybackHistory(_ enabled: Bool, defaults: UserDefaults = .standard) {
-        defaults.set(enabled, forKey: Key.savePlaybackHistory)
+        let policy = EnterprisePolicy.snapshot(defaults: defaults)
+        defaults.set(policy.forceDisablePlaybackHistory ? false : enabled, forKey: Key.savePlaybackHistory)
     }
 
     static func clearHistoryOnQuit(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: Key.clearHistoryOnQuit) as? Bool ?? false
+        if EnterprisePolicy.snapshot(defaults: defaults).forceClearHistoryOnQuit {
+            return true
+        }
+        return defaults.object(forKey: Key.clearHistoryOnQuit) as? Bool ?? false
     }
 
     static func setClearHistoryOnQuit(_ enabled: Bool, defaults: UserDefaults = .standard) {
-        defaults.set(enabled, forKey: Key.clearHistoryOnQuit)
+        let policy = EnterprisePolicy.snapshot(defaults: defaults)
+        defaults.set(policy.forceClearHistoryOnQuit ? true : enabled, forKey: Key.clearHistoryOnQuit)
     }
 
     static func allowPrivateNetworkStreams(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: Key.allowPrivateNetworkStreams) as? Bool ?? false
+        guard !EnterprisePolicy.snapshot(defaults: defaults).forceBlockPrivateNetworkStreams else { return false }
+        return defaults.object(forKey: Key.allowPrivateNetworkStreams) as? Bool ?? false
     }
 
     static func setAllowPrivateNetworkStreams(_ enabled: Bool, defaults: UserDefaults = .standard) {
-        defaults.set(enabled, forKey: Key.allowPrivateNetworkStreams)
+        let policy = EnterprisePolicy.snapshot(defaults: defaults)
+        defaults.set(policy.forceBlockPrivateNetworkStreams ? false : enabled, forKey: Key.allowPrivateNetworkStreams)
     }
 
     static func externalMediaEnginesEnabled(defaults: UserDefaults = .standard) -> Bool {
         guard AppSecurityPolicy.externalMediaEnginesAvailable else { return false }
+        guard !EnterprisePolicy.snapshot(defaults: defaults).forceDisableExternalMediaEngines else { return false }
         return defaults.object(forKey: Key.externalMediaEnginesEnabled) as? Bool ?? false
     }
 
     static func setExternalMediaEnginesEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
-        guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+        let policy = EnterprisePolicy.snapshot(defaults: defaults)
+        guard AppSecurityPolicy.externalMediaEnginesAvailable, !policy.forceDisableExternalMediaEngines else {
             defaults.set(false, forKey: Key.externalMediaEnginesEnabled)
             return
         }
