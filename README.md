@@ -11,23 +11,34 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - 200% volume boost with slider and mouse-wheel control over the player area.
 - Embedded audio/subtitle track selectors when using a user-installed VLC/libVLC engine.
 - Left-pane metadata inspector that shows file details before playback starts.
+- Save Metadata + Poster stores the selected item's inspected metadata and best available local poster image in the app's Application Support cache when playback history is enabled.
+- Visible saved-poster preview with choose/replace and remove controls.
 - Optional user-installed LibVLC metadata parsing for embedded movie, TV, artwork, language, and track details.
 - Recent files and saved library folders when playback history is enabled.
+- Searchable Media Library window with continue-watching, favorites, unwatched, streams, and missing-file filters backed by SQLite.
+- Security-scoped bookmarks preserve user-approved library folder access across sandboxed launches; folder scans are asynchronous, bounded, progress-aware, and cancellable.
 - External subtitle loading for SRT, ASS, SSA, and VTT files.
-- Subtitle delay control.
+- Subtitle Center for default subtitle mode, preferred language, style presets, and subtitle delay control.
 - A-B loop markers for repeating a section.
 - Chapter navigation when supported by the active media engine.
 - Frame screenshots saved to Pictures.
 - Audio presets, audio delay, and audio output device selection when using a user-installed VLC/libVLC engine.
 - Video adjustment panel for brightness, contrast, saturation, hue, and gamma.
+- Quality presets that combine tuned video adjustments with practical audio presets.
+- Per-media playback profiles preserve speed, quality, audio preset, and audio/subtitle delays without changing global defaults.
 - Mini player, floating picture-in-picture-style window, theater mode, hideable sidebar, and full screen.
 - Playback resume per file or stream.
 - Volume and speed persistence, with playlist/history persistence available as an opt-in privacy setting.
 - Network stream opening for public HTTP, HTTPS, RTSP, and HLS-style URLs; private/local targets and DNS names resolving to private/local addresses are blocked by default.
+- Optional HTTPS/RTSPS stream credentials are held in memory or stored per host in the macOS Keychain and are never written into playlists or history.
 - Privacy controls for enabling saved playback history, clearing history on quit, and clearing all history.
+- A dedicated Settings window for playback, subtitles, library/privacy, Stable/Beta updates, and effective enterprise configuration.
 - Enterprise status, release readiness, playback diagnostics, playback engine doctor, managed preferences, MDM profile export, support bundle export/upload, host allow-listing, kiosk policy, and license status/import/activation workflows.
-- Advanced library status for favorites, watched/unwatched state, tags, saved folders, and library health reports.
+- Playback Engine Setup Assistant, Recovery Report, and Fleet Diagnostics JSON export for help desk and managed Mac workflows.
+- Security-focused defaults for redacted diagnostic logs, HTTPS-only public support uploads with optional host allow-listing and Keychain-backed bearer tokens, signed required licenses, and sandboxed external-engine builds.
+- Advanced library status for favorites, watched/unwatched state, tags, saved folders, stream bookmarks, quality buckets, TV episode groups, duplicate/version groups, and library health reports.
 - Main-thread hang watchdog logging for freeze investigations.
+- Bounded operation-timeline diagnostics for playback startup, scans, and watchdog incidents in exported support bundles.
 - On-screen HUD for seek, volume, speed, subtitle, and resume feedback.
 - VoiceOver-friendly labels and help text for the playlist, inspector, transport, volume, speed, audio, subtitle, and adjustment controls.
 
@@ -41,9 +52,13 @@ A native macOS media player: drag in media, build a playlist, play/pause, seek, 
 - Move the volume slider up to 200%, or scroll the mouse wheel over the player area to adjust volume.
 - Audio and subtitle tools are split into separate lower control rows so the window stays usable when the sidebar is visible.
 - Opened files are selected first so the inspector can show metadata; press Space, K, or double-click the row to start playback.
+- Use Save Metadata + Poster in the inspector to persist local metadata JSON plus embedded artwork or a frame poster. If no poster can be extracted, the metadata still saves and the HUD reports that the poster is unavailable.
 - Use Help > Playback Diagnostics when a file plays audio-only, hangs, or needs VLC/mpv routing; use Help > Playback Engine Doctor to inspect VLC/mpv trust; use Help > Export Support Bundle for support cases.
+- Use Help > Playback Engine Setup Assistant to get the exact next step for VLC/mpv setup, Help > Recovery Report after a force quit, and Help > Export Fleet Diagnostics JSON for admin inventory.
 - Use Help > Release Readiness before customer publishing and Help > Export MDM Policy Profile for managed deployments.
 - Use File > Manage Library Folders to review, rescan, or remove saved media folders when history saving is enabled.
+- Use File > Browse Media Library to search and filter all indexed media without rebuilding the current playlist.
+- Use File > Save Current Stream Bookmark and File > Open Stream Bookmark for approved stream sources when history saving is enabled.
 - Use File > Toggle Favorite, Mark Watched, Mark Unwatched, Set Tags, and Library Report for library curation workflows.
 - Clearing the playlist asks for confirmation and never deletes media files from disk.
 - Press Space or K to play/pause, J/L to seek, Up/Down for volume, M to mute, F for full screen, B to show or hide the sidebar, and [/] for previous/next playlist items.
@@ -69,6 +84,7 @@ When `mpv` is installed separately by the user at `/opt/homebrew/bin/mpv`, `/usr
 - [Development and packaging](docs/DEVELOPMENT.md)
 - [Commercial distribution checklist](docs/COMMERCIAL_DISTRIBUTION.md)
 - [QA media test plan](docs/QA_MEDIA_TEST_PLAN.md)
+- [Codec service architecture](docs/CODEC_SERVICE_ARCHITECTURE.md)
 
 ## Run from source
 
@@ -95,7 +111,7 @@ export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 
 The release DMG is created at `Build/Video Player.dmg`.
 
-To build the advanced external-engine variant instead of the sandboxed native-only default, also set `ENABLE_EXTERNAL_ENGINES=1` and `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` to the exact Team IDs you intend to trust.
+To build the advanced external-engine variant instead of the sandboxed native-only default, also set `ENABLE_EXTERNAL_ENGINES=1` and `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` to the exact Team IDs you intend to trust. Empty trust lists are rejected because they create a build that advertises VLC/mpv support but cannot trust any installed engine. To inspect an installed VLC Team ID, run `codesign -dv /Applications/VLC.app 2>&1 | grep TeamIdentifier`.
 
 For local QA only, debug development builds can set `BUILD_CONFIGURATION=debug` and `ALLOW_UNVERIFIED_EXTERNAL_ENGINES=1` to test playback against a known local VLC copy when macOS signature validation is failing. Do not use that override for release, notarized, or customer builds.
 
@@ -108,19 +124,19 @@ Use Video Player > Check for Updates or Help > Check for Updates to look for the
 To publish an update from your local Mac, log in with `gh auth login`, bump `APP_VERSION` and `APP_BUILD` in [Scripts/build_app.sh](Scripts/build_app.sh), store the private update key in Keychain as a generic password named `videoplayer-update-signing-private-key`, configure Developer ID signing and notarization, commit on a clean `main`, create a signed release tag, then run:
 
 ```sh
-git tag -s "v0.1.8" -m "Release v0.1.8"
+git tag -s "v2.0" -m "Release v2.0"
 export CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export NOTARY_PROFILE="your-notarytool-profile"
 export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
-export RELEASE_APPROVAL="v0.1.8"
+export RELEASE_APPROVAL="v2.0"
 ./Scripts/publish_release.sh
 ```
 
-Use Video Player > Reveal Log File or Help > Reveal Log File to open the persistent diagnostic log. The log records app launch, update checks, playback routing, codec detection, trusted VLC/mpv validation, and external-engine startup/failure details.
+Use Video Player > Reveal Log File or Help > Reveal Log File to open the persistent diagnostic log. The log records app launch, update checks, playback routing, codec detection, trusted VLC/mpv validation, and external-engine startup/failure details while redacting stream credentials, query strings, URL fragments, home-folder paths, and `/Volumes` media paths before write.
 
 Use Help > Enterprise Status to view managed policy, update readiness, external-engine trust configuration, and license status. Admins can disable update checks, force history off, block private streams, disable external engines, restrict stream hosts, and control support bundle log export through managed preferences.
 
-The app supports a Sparkle-ready managed update channel for future migration, but the production updater remains the signed GitHub release manifest flow until Sparkle 2 and its sandbox services are intentionally bundled.
+The signed GitHub updater supports user-selectable Stable and Beta channels. Stable excludes prereleases; Beta accepts prereleases only when they contain the same signed manifest and verified DMG required for stable releases. Sparkle remains a documented future migration path rather than a bundled runtime.
 
 Video Player's application source code is released under the [MIT License](LICENSE). The distributed app does not bundle VLC/libVLC, mpv, FFmpeg, or other third-party media engines; optional user-installed integrations keep their own upstream license terms.

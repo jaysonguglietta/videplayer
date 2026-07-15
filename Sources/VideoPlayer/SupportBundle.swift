@@ -26,6 +26,10 @@ enum SupportBundleExporter {
         try sanitize(request.diagnosticReport, redactPaths: request.redactPaths)
             .write(to: diagnosticsURL, atomically: true, encoding: .utf8)
 
+        let timelineURL = bundleDirectory.appendingPathComponent("operation-timeline.txt")
+        try sanitize(OperationTimeline.reportText(), redactPaths: request.redactPaths)
+            .write(to: timelineURL, atomically: true, encoding: .utf8)
+
         let readmeURL = bundleDirectory.appendingPathComponent("README.txt")
         try """
         Video Player Support Bundle
@@ -82,6 +86,7 @@ enum SupportBundleExporter {
         lines.append("--------------")
         lines.append("support-report.txt")
         lines.append("playback-diagnostics.txt")
+        lines.append("operation-timeline.txt")
         if request.includeLogs && !request.policy.disableSupportBundleLogExport {
             lines.append("video-player.log")
         } else {

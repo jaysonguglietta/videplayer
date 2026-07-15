@@ -13,13 +13,17 @@ enum HangWatchdog {
         newTimer.schedule(deadline: .now() + 1, repeating: 1)
         newTimer.setEventHandler {
             DispatchQueue.main.async {
-                lastMainThreadBeat = Date()
+                queue.async {
+                    lastMainThreadBeat = Date()
+                }
             }
 
             let now = Date()
             let lag = now.timeIntervalSince(lastMainThreadBeat)
             guard lag > threshold, now.timeIntervalSince(lastWarning) > threshold else { return }
             lastWarning = now
+            PlaybackRecovery.recordHangWarning(date: now)
+            OperationTimeline.record("main-thread.hang", detail: String(format: "lag=%.1fs", lag))
             AppLogger.warning(String(format: "Main thread watchdog observed %.1fs without a heartbeat", lag), flush: true)
         }
         timer = newTimer

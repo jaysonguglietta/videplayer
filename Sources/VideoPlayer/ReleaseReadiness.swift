@@ -80,11 +80,42 @@ enum ReleaseReadiness {
         ))
 
         checks.append(check(
+            title: "Support Upload Endpoint",
+            condition: policy.supportUploadURLString == nil || policy.supportUploadURL != nil,
+            failureStatus: .warn,
+            passDetail: policy.supportUploadURLString == nil
+                ? "Support uploads are not configured."
+                : "Support upload endpoint uses HTTPS without embedded credentials or literal private/local hosts.",
+            failDetail: "EnterpriseSupportUploadURL must be HTTPS, must not include credentials, and must not target literal private/local hosts."
+        ))
+
+        checks.append(check(
+            title: "Support Upload Authentication",
+            condition: policy.supportUploadURLString == nil || policy.supportUploadTokenKeychainService != nil,
+            failureStatus: .warn,
+            passDetail: policy.supportUploadURLString == nil
+                ? "Support uploads are not configured."
+                : "Support upload bearer token is configured through Keychain service \(policy.supportUploadTokenKeychainService ?? "").",
+            failDetail: "Configure EnterpriseSupportUploadTokenKeychainService for authenticated support uploads."
+        ))
+
+        checks.append(check(
+            title: "Support Upload Host Allow-List",
+            condition: policy.supportUploadURLString == nil || !policy.supportUploadHostSuffixes.isEmpty,
+            failureStatus: .warn,
+            passDetail: policy.supportUploadURLString == nil
+                ? "Support uploads are not configured."
+                : "Support upload host suffix allow-list is configured.",
+            failDetail: "Configure EnterpriseSupportUploadHostSuffixes so uploads can only go to approved support domains."
+        ))
+
+        checks.append(check(
             title: "Update Channel",
-            condition: policy.updateChannel == "github" || policy.updateChannel == "sparkle" || policy.updateChannel == "mdm",
+            condition: ["github", "github-stable", "stable", "github-beta", "beta", "sparkle", "mdm"]
+                .contains(policy.updateChannel),
             failureStatus: .warn,
             passDetail: updateChannelDetail(policy),
-            failDetail: "Unknown update channel '\(policy.updateChannel)'. Use github, sparkle, or mdm."
+            failDetail: "Unknown update channel '\(policy.updateChannel)'. Use github, github-stable, github-beta, sparkle, or mdm."
         ))
 
         checks.append(check(
@@ -119,6 +150,10 @@ enum ReleaseReadiness {
         switch policy.updateChannel {
         case "github":
             return "Using the built-in signed GitHub release updater."
+        case "github-stable", "stable":
+            return "Using the built-in signed GitHub release updater on the managed Stable channel."
+        case "github-beta", "beta":
+            return "Using the built-in signed GitHub release updater with signed prereleases enabled."
         case "sparkle":
             return "Sparkle-ready channel selected. Full Sparkle runtime integration still requires bundling Sparkle 2 and its sandbox services."
         case "mdm":

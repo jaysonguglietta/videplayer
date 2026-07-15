@@ -33,15 +33,15 @@ export EXPECTED_DEVELOPER_TEAM_ID="TEAMID"
 
 ```sh
 git status --short
-git tag -s "v0.1.8" -m "Release v0.1.8"
+git tag -s "v2.0" -m "Release v2.0"
 export UPDATE_SIGNING_KEYCHAIN_SERVICE="videoplayer-update-signing-private-key"
-export RELEASE_APPROVAL="v0.1.8"
+export RELEASE_APPROVAL="v2.0"
 ./Scripts/publish_release.sh
 ```
 
 6. Keep the original private key file offline or in a secure secret store after adding it to Keychain; do not keep it in synced folders.
 7. Keep `ENABLE_EXTERNAL_ENGINES` unset for the default sandboxed commercial DMG.
-8. If you intentionally ship an advanced external-engine build, set `ENABLE_EXTERNAL_ENGINES=1` and set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust.
+8. If you intentionally ship an advanced external-engine build, set `ENABLE_EXTERNAL_ENGINES=1` and set `TRUSTED_EXTERNAL_ENGINE_TEAM_IDS` only for external VLC/mpv signatures you intentionally trust. The build script rejects empty trusted-engine lists for advanced builds.
 9. If you use offline enterprise licensing, set `ENTERPRISE_LICENSE_PUBLIC_KEY` during packaging and keep the corresponding private signing key outside the repo.
 10. Do not use VideoLAN, VLC, or mpv names/logos as product branding.
 11. Mention VLC/mpv only as optional user-installed integrations.
@@ -62,7 +62,8 @@ The default commercial build does not load VLC/libVLC or mpv. An advanced build 
 - Private/local network streams, including DNS names resolving to private/local addresses, are blocked by default.
 - Managed preferences can disable update checks, external engines, private streams, support-bundle logs, playback history, and can restrict approved stream host suffixes.
 - Support bundles redact home-folder paths, volume paths, stream credentials, and common URL tokens by default.
-- Optional support bundle uploads are controlled by `EnterpriseSupportUploadURL`; do not configure it unless the receiving endpoint is authenticated, HTTPS-only, access-controlled, and has retention rules.
+- Optional support bundle uploads are controlled by `EnterpriseSupportUploadURL`; the app requires HTTPS and public DNS results, supports host suffix allow-listing through `EnterpriseSupportUploadHostSuffixes`, and can attach a Keychain-backed bearer token from `EnterpriseSupportUploadTokenKeychainService`. Configure only authenticated, access-controlled endpoints with retention rules.
+- Fleet Diagnostics JSON, Playback Engine Setup Assistant, and Recovery Report provide support-ready exports without bundling third-party engines.
 - Kiosk mode can lock down file browsing, stream entry, playlist import/export, and library edits for controlled environments.
 - Enterprise license files are verified with a packaged P-256 public key when configured; otherwise they are displayed as operational records only.
 - Playback history is off by default; saved playback history and saved library folders can be enabled, cleared immediately, or cleared on quit.
@@ -75,12 +76,14 @@ Before selling to managed customers:
 - Provide [Enterprise deployment guide](ENTERPRISE_DEPLOYMENT.md) and [QA media test plan](QA_MEDIA_TEST_PLAN.md) with the release.
 - Decide whether updates are handled by GitHub signed manifests or disabled through MDM and deployed by the customer's device management system.
 - Treat `EnterpriseUpdateChannel=sparkle` as a migration/readiness setting until Sparkle 2 and its sandbox services are actually bundled into the app.
-- Decide whether license status is informational or enforced with a signed offline license public key.
+- Decide whether license status is informational or enforced with a signed offline license public key. Required-license deployments must package `ENTERPRISE_LICENSE_PUBLIC_KEY`; unsigned/unverified license files are not treated as usable for enforcement.
 - Confirm support bundle redaction stays on by default.
 - Document exactly whether the customer is buying the default sandboxed native-only build or an advanced external-engine build.
-- Run Help > Release Readiness and Help > Playback Engine Doctor in the final built app before handing it to a customer.
+- Run Help > Release Readiness, Help > Playback Engine Doctor, Help > Playback Engine Setup Assistant, Help > Export Fleet Diagnostics JSON, and Help > Recovery Report in the final built app before handing it to a customer.
 
 ## If You Later Bundle Third-Party Engines
+
+Do not move codec parsing into the main sandboxed app process. Follow the signed helper boundary and acceptance gates in [Codec service architecture](CODEC_SERVICE_ARCHITECTURE.md).
 
 Create a separate legal/compliance pass before release. At minimum, expect to:
 

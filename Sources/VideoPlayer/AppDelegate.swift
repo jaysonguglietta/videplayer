@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let chaptersMenu = NSMenu(title: "Chapters")
     private let audioOutputMenu = NSMenu(title: "Audio Output")
     private let updateChecker = UpdateChecker()
+    private var settingsWindowController: SettingsWindowController?
     private var externalEnginesMenuItem: NSMenuItem?
     private var privateStreamsMenuItem: NSMenuItem?
     private var saveHistoryMenuItem: NSMenuItem?
@@ -17,18 +18,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let recoveryState = PlaybackRecovery.state()
+        PlaybackRecovery.markLaunch()
         AppLogger.info("Application launched version=\(OpenSourceNotices.appVersion) log=\(AppLogger.logFileURL.path)", flush: true)
+        if !recoveryState.previousSessionEndedCleanly {
+            AppLogger.warning("Previous app session did not record a clean shutdown", flush: true)
+        }
         HangWatchdog.start()
         let controller = PlayerWindowController()
         playerWindowController = controller
         controller.showWindow(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         buildMainMenu()
+        loadUITestMediaIfRequested()
         openPendingURLsIfNeeded()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        PlaybackRecovery.markCleanShutdown()
+        AppLogger.info("Application terminating cleanly", flush: true)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -45,6 +57,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let urls = pendingOpenURLs
         pendingOpenURLs.removeAll()
         playerViewController.openMedia(urls, replacePlaylist: true)
+    }
+
+    private func loadUITestMediaIfRequested() {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let marker = arguments.firstIndex(of: "--ui-test-media"),
+              arguments.indices.contains(marker + 1)
+        else {
+            return
+        }
+        pendingOpenURLs.append(URL(fileURLWithPath: arguments[marker + 1]))
+        #endif
     }
 
     @objc private func openDocument(_ sender: Any?) {
@@ -71,6 +95,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playerViewController?.openNetworkStreamDialog(sender)
     }
 
+    @objc private func openStreamBookmark(_ sender: Any?) {
+        playerViewController?.openStreamBookmarkDialog(sender)
+    }
+
+    @objc private func saveCurrentStreamBookmark(_ sender: Any?) {
+        playerViewController?.saveCurrentStreamBookmark(sender)
+    }
+
     @objc private func openRecentItem(_ sender: NSMenuItem) {
         playerViewController?.openRecentMedia(at: sender.tag)
     }
@@ -89,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func manageLibraryFolders(_ sender: Any?) {
         playerViewController?.showLibraryManager(sender)
+    }
+
+    @objc private func showLibraryBrowser(_ sender: Any?) {
+        playerViewController?.showLibraryBrowser(sender)
     }
 
     @objc private func loadSubtitle(_ sender: Any?) {
@@ -146,6 +182,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func applyAudioPreset(_ sender: NSMenuItem) {
         let presetName = (sender.representedObject as? String) ?? sender.title
         playerViewController?.applyAudioPreset(named: presetName)
+    }
+
+    @objc private func applyQualityPreset(_ sender: NSMenuItem) {
+        let presetName = (sender.representedObject as? String) ?? sender.title
+        playerViewController?.applyQualityPreset(named: presetName)
+    }
+
+    @objc private func showPlaybackProfile(_ sender: Any?) {
+        playerViewController?.showPlaybackProfile(sender)
+    }
+
+    @objc private func showSubtitleCenter(_ sender: Any?) {
+        playerViewController?.showSubtitleCenter(sender)
     }
 
     @objc private func previousChapter(_ sender: Any?) {
@@ -252,6 +301,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateChecker.checkForUpdates(presentingWindow: playerWindowController?.window)
     }
 
+    @objc private func showSettings(_ sender: Any?) {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(
+                onPreferencesChanged: { [weak self] in
+                    self?.playerViewController?.reloadPreferences()
+                    self?.updateSecurityMenuStates()
+                },
+                onCheckForUpdates: { [weak self] in
+                    self?.checkForUpdates(nil)
+                },
+                onClearHistory: { [weak self] in
+                    self?.playerViewController?.clearAllPlaybackHistory(nil)
+                }
+            )
+        }
+        settingsWindowController?.showWindow(sender)
+    }
+
     @objc private func showEnterpriseStatus(_ sender: Any?) {
         playerViewController?.showEnterpriseStatus(sender)
     }
@@ -262,6 +329,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showMediaEngineDoctor(_ sender: Any?) {
         playerViewController?.showMediaEngineDoctor(sender)
+    }
+
+    @objc private func showPlaybackEngineSetupAssistant(_ sender: Any?) {
+        playerViewController?.showPlaybackEngineSetupAssistant(sender)
+    }
+
+    @objc private func exportFleetDiagnostics(_ sender: Any?) {
+        playerViewController?.exportFleetDiagnostics(sender)
+    }
+
+    @objc private func showRecoveryReport(_ sender: Any?) {
+        playerViewController?.showRecoveryReport(sender)
     }
 
     @objc private func exportMDMPolicyProfile(_ sender: Any?) {
@@ -348,6 +427,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         updateItem.target = self
         appMenu.addItem(updateItem)
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
         let licensesItem = NSMenuItem(title: "Open Source Licenses", action: #selector(showOpenSourceLicenses(_:)), keyEquivalent: "")
         licensesItem.target = self
         appMenu.addItem(licensesItem)
@@ -387,6 +469,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let networkItem = NSMenuItem(title: "Open Network Stream...", action: #selector(openNetworkStream(_:)), keyEquivalent: "n")
         networkItem.target = self
         fileMenu.addItem(networkItem)
+        let openBookmarkItem = NSMenuItem(title: "Open Stream Bookmark...", action: #selector(openStreamBookmark(_:)), keyEquivalent: "")
+        openBookmarkItem.target = self
+        fileMenu.addItem(openBookmarkItem)
+        let saveBookmarkItem = NSMenuItem(title: "Save Current Stream Bookmark", action: #selector(saveCurrentStreamBookmark(_:)), keyEquivalent: "")
+        saveBookmarkItem.target = self
+        fileMenu.addItem(saveBookmarkItem)
         fileMenu.addItem(.separator())
         let addLibraryItem = NSMenuItem(title: "Add Library Folder...", action: #selector(addLibraryFolder(_:)), keyEquivalent: "l")
         addLibraryItem.keyEquivalentModifierMask = [.command, .option]
@@ -398,6 +486,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let manageLibraryItem = NSMenuItem(title: "Manage Library Folders...", action: #selector(manageLibraryFolders(_:)), keyEquivalent: "")
         manageLibraryItem.target = self
         fileMenu.addItem(manageLibraryItem)
+        let browseLibraryItem = NSMenuItem(title: "Browse Media Library...", action: #selector(showLibraryBrowser(_:)), keyEquivalent: "l")
+        browseLibraryItem.keyEquivalentModifierMask = [.command, .shift]
+        browseLibraryItem.target = self
+        fileMenu.addItem(browseLibraryItem)
         let libraryReportItem = NSMenuItem(title: "Library Report...", action: #selector(showLibraryReport(_:)), keyEquivalent: "")
         libraryReportItem.target = self
         fileMenu.addItem(libraryReportItem)
@@ -452,6 +544,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playbackMenu.addItem(clearLoopItem)
         playbackMenu.addItem(.separator())
         playbackMenu.addItem(makeAudioPresetMenuItem())
+        playbackMenu.addItem(makeQualityPresetMenuItem())
+        playbackMenu.addItem(NSMenuItem(title: "Playback Profile...", action: #selector(showPlaybackProfile(_:)), keyEquivalent: ""))
         let audioOutputItem = NSMenuItem(title: "Audio Output", action: nil, keyEquivalent: "")
         audioOutputMenu.delegate = self
         audioOutputItem.submenu = audioOutputMenu
@@ -459,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         playbackMenu.addItem(NSMenuItem(title: "Audio Delay -0.1s", action: #selector(decreaseAudioDelay(_:)), keyEquivalent: "{"))
         playbackMenu.addItem(NSMenuItem(title: "Audio Delay +0.1s", action: #selector(increaseAudioDelay(_:)), keyEquivalent: "}"))
         playbackMenu.addItem(NSMenuItem(title: "Reset Audio Delay", action: #selector(resetAudioDelay(_:)), keyEquivalent: "\\"))
+        playbackMenu.addItem(NSMenuItem(title: "Subtitle Center...", action: #selector(showSubtitleCenter(_:)), keyEquivalent: "u"))
         playbackMenu.addItem(.separator())
         let externalEnginesItem = NSMenuItem(title: "Enable External VLC/mpv Engines", action: #selector(toggleExternalMediaEngines(_:)), keyEquivalent: "")
         externalEnginesItem.target = self
@@ -537,12 +632,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let engineDoctorItem = NSMenuItem(title: "Playback Engine Doctor...", action: #selector(showMediaEngineDoctor(_:)), keyEquivalent: "")
         engineDoctorItem.target = self
         helpMenu.addItem(engineDoctorItem)
+        let setupAssistantItem = NSMenuItem(title: "Playback Engine Setup Assistant...", action: #selector(showPlaybackEngineSetupAssistant(_:)), keyEquivalent: "")
+        setupAssistantItem.target = self
+        helpMenu.addItem(setupAssistantItem)
         let releaseReadinessItem = NSMenuItem(title: "Release Readiness...", action: #selector(showReleaseReadiness(_:)), keyEquivalent: "")
         releaseReadinessItem.target = self
         helpMenu.addItem(releaseReadinessItem)
         let enterpriseStatusItem = NSMenuItem(title: "Enterprise Status...", action: #selector(showEnterpriseStatus(_:)), keyEquivalent: "")
         enterpriseStatusItem.target = self
         helpMenu.addItem(enterpriseStatusItem)
+        let fleetDiagnosticsItem = NSMenuItem(title: "Export Fleet Diagnostics JSON...", action: #selector(exportFleetDiagnostics(_:)), keyEquivalent: "")
+        fleetDiagnosticsItem.target = self
+        helpMenu.addItem(fleetDiagnosticsItem)
+        let recoveryItem = NSMenuItem(title: "Recovery Report...", action: #selector(showRecoveryReport(_:)), keyEquivalent: "")
+        recoveryItem.target = self
+        helpMenu.addItem(recoveryItem)
         let mdmProfileItem = NSMenuItem(title: "Export MDM Policy Profile...", action: #selector(exportMDMPolicyProfile(_:)), keyEquivalent: "")
         mdmProfileItem.target = self
         helpMenu.addItem(mdmProfileItem)
@@ -633,6 +737,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let parent = NSMenuItem(title: "Audio Preset", action: nil, keyEquivalent: "")
+        parent.submenu = menu
+        return parent
+    }
+
+    private func makeQualityPresetMenuItem() -> NSMenuItem {
+        let menu = NSMenu(title: "Quality Preset")
+        for preset in PlaybackQualityPreset.allCases {
+            let item = NSMenuItem(title: preset.rawValue, action: #selector(applyQualityPreset(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.rawValue
+            menu.addItem(item)
+        }
+
+        let parent = NSMenuItem(title: "Quality Preset", action: nil, keyEquivalent: "")
         parent.submenu = menu
         return parent
     }

@@ -67,7 +67,11 @@ final class UpdateChecker {
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
                 AppLogger.info("Update check decoded releases count=\(releases.count)", flush: true)
-                self?.handle(releases: releases, presentingWindow: presentingWindow)
+                self?.handle(
+                    releases: releases,
+                    includePrereleases: AppPreferences.effectiveUpdateChannel(policy: policy) == .beta,
+                    presentingWindow: presentingWindow
+                )
             } catch {
                 AppLogger.error("Update check decode failed error=\(error.localizedDescription)", flush: true)
                 self?.showError("Could not read update information.", detail: error.localizedDescription, presentingWindow: presentingWindow)
@@ -78,10 +82,11 @@ final class UpdateChecker {
         task.resume()
     }
 
-    private func handle(releases: [GitHubRelease], presentingWindow: NSWindow?) {
+    private func handle(releases: [GitHubRelease], includePrereleases: Bool, presentingWindow: NSWindow?) {
         let availability = UpdateReleaseSelector.availability(
             from: releases,
-            currentVersion: OpenSourceNotices.appVersion
+            currentVersion: OpenSourceNotices.appVersion,
+            includePrereleases: includePrereleases
         )
 
         switch availability {
@@ -369,8 +374,15 @@ enum UpdateAvailability: Equatable {
 }
 
 enum UpdateReleaseSelector {
-    static func availability(from releases: [GitHubRelease], currentVersion: String) -> UpdateAvailability {
-        guard let newestRelease = newestPublishedRelease(from: releases) else {
+    static func availability(
+        from releases: [GitHubRelease],
+        currentVersion: String,
+        includePrereleases: Bool = false
+    ) -> UpdateAvailability {
+        guard let newestRelease = newestPublishedRelease(
+            from: releases,
+            includePrereleases: includePrereleases
+        ) else {
             return .noPublishedReleases
         }
 
@@ -384,9 +396,12 @@ enum UpdateReleaseSelector {
         }
     }
 
-    static func newestPublishedRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+    static func newestPublishedRelease(
+        from releases: [GitHubRelease],
+        includePrereleases: Bool = false
+    ) -> GitHubRelease? {
         releases
-            .filter { !$0.isDraft && !$0.isPrerelease && !$0.normalizedTag.isEmpty }
+            .filter { !$0.isDraft && (includePrereleases || !$0.isPrerelease) && !$0.normalizedTag.isEmpty }
             .max {
                 VersionComparator.compare($0.normalizedTag, to: $1.normalizedTag) == .orderedAscending
             }

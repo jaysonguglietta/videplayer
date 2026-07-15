@@ -50,10 +50,16 @@ final class VLCBridge {
         }
     }
 
-    func play(url: URL, in videoView: NSView, volume: Double, speed: Double) throws {
+    func play(
+        url: URL,
+        in videoView: NSView,
+        volume: Double,
+        speed: Double,
+        subtitleStyle: SubtitlePreferences.StylePreset = .system
+    ) throws {
         AppLogger.info("VLCBridge.play entered url=\(url.absoluteString) volume=\(volume) speed=\(speed)", flush: true)
         let api = try loadAPI()
-        let instance = try loadInstance(api: api)
+        let instance = try loadInstance(api: api, subtitleStyle: subtitleStyle)
 
         stopPlayer()
 
@@ -380,7 +386,7 @@ final class VLCBridge {
         return loadedAPI
     }
 
-    private func loadInstance(api: DynamicLibVLC) throws -> OpaquePointer {
+    private func loadInstance(api: DynamicLibVLC, subtitleStyle: SubtitlePreferences.StylePreset) throws -> OpaquePointer {
         if let instance {
             return instance
         }
@@ -396,7 +402,7 @@ final class VLCBridge {
             "--quiet",
             "--no-video-title-show",
             "--no-metadata-network-access"
-        ]
+        ] + subtitleStyle.vlcArguments
 
         let cStrings = arguments.map { strdup($0) }
         defer { cStrings.forEach { free($0) } }

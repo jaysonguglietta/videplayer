@@ -17,6 +17,8 @@ enum MDMProfileBuilder {
             (EnterprisePolicy.Key.kioskModeEnabled, boolValue(policy.kioskModeEnabled)),
             (EnterprisePolicy.Key.kioskPlaylistURL, stringValue(policy.kioskPlaylistURLString ?? "")),
             (EnterprisePolicy.Key.supportUploadURL, stringValue(policy.supportUploadURLString ?? "")),
+            (EnterprisePolicy.Key.supportUploadHostSuffixes, arrayValue(policy.supportUploadHostSuffixes)),
+            (EnterprisePolicy.Key.supportUploadTokenKeychainService, stringValue(policy.supportUploadTokenKeychainService ?? "")),
             (EnterprisePolicy.Key.updateChannel, stringValue(policy.updateChannel)),
             (EnterprisePolicy.Key.sparkleAppcastURL, stringValue(policy.sparkleAppcastURLString ?? "")),
             (EnterprisePolicy.Key.allowedStreamHostSuffixes, arrayValue(policy.allowedStreamHostSuffixes))

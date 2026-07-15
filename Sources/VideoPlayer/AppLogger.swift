@@ -42,6 +42,43 @@ enum AppLogger {
         log(.error, message(), flush: flush)
     }
 
+    static func redactedURLString(_ url: URL) -> String {
+        guard !url.isFileURL else {
+            return redactedFilePath(url.path)
+        }
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.user = nil
+        components?.password = nil
+        let hadQuery = components?.query?.isEmpty == false
+        let hadFragment = components?.fragment?.isEmpty == false
+        components?.query = nil
+        components?.fragment = nil
+
+        var redacted = components?.url?.absoluteString ?? url.absoluteString
+        if hadQuery {
+            redacted += "?[REDACTED]"
+        }
+        if hadFragment {
+            redacted += "#[REDACTED]"
+        }
+        return redacted
+    }
+
+    static func redactedFilePath(_ path: String) -> String {
+        var redacted = path
+        let home = NSHomeDirectory()
+        if !home.isEmpty {
+            redacted = redacted.replacingOccurrences(of: home, with: "~")
+        }
+        redacted = redacted.replacingOccurrences(
+            of: #"/Volumes/[^/\s]+/[^ \n\t]+"#,
+            with: "/Volumes/[REDACTED]",
+            options: .regularExpression
+        )
+        return redacted
+    }
+
     private static let maximumLogSize = 2_000_000
     private static let queue = DispatchQueue(label: "com.jaysonguglietta.videoplayer.logger")
     private static let queueKey = DispatchSpecificKey<Bool>()
@@ -77,7 +114,7 @@ enum AppLogger {
         createLogFileIfNeeded(at: url)
         rotateLogIfNeeded(at: url)
 
-        let cleanedMessage = message
+        let cleanedMessage = sanitizeForLog(message)
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "\n", with: "\\n")
         let timestamp = dateFormatter.string(from: Date())
@@ -106,6 +143,34 @@ enum AppLogger {
         } catch {
             NSLog("Video Player log setup failed: \(error.localizedDescription)")
         }
+    }
+
+    private static func sanitizeForLog(_ message: String) -> String {
+        var sanitized = redactURLs(in: message)
+        sanitized = sanitized.replacingOccurrences(
+            of: #"([?&](token|signature|sig|key|password|pass|auth|access_token|refresh_token)=)[^ \n\t&]+"#,
+            with: "$1[REDACTED]",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        sanitized = redactedFilePath(sanitized)
+        return sanitized
+    }
+
+    private static func redactURLs(in message: String) -> String {
+        let pattern = #"(https?|rtsp|rtsps)://[^\s]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return message
+        }
+
+        let original = message as NSString
+        let result = NSMutableString(string: message)
+        let matches = regex.matches(in: message, range: NSRange(location: 0, length: original.length))
+        for match in matches.reversed() {
+            let rawURL = original.substring(with: match.range)
+            guard let url = URL(string: rawURL) else { continue }
+            result.replaceCharacters(in: match.range, with: redactedURLString(url))
+        }
+        return result as String
     }
 
     private static func rotateLogIfNeeded(at url: URL) {

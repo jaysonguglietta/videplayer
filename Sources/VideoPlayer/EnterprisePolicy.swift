@@ -14,6 +14,8 @@ struct EnterprisePolicySnapshot: Equatable {
     let kioskModeEnabled: Bool
     let kioskPlaylistURLString: String?
     let supportUploadURLString: String?
+    let supportUploadHostSuffixes: [String]
+    let supportUploadTokenKeychainService: String?
     let updateChannel: String
     let sparkleAppcastURLString: String?
 
@@ -28,6 +30,8 @@ struct EnterprisePolicySnapshot: Equatable {
             || requireLicense
             || kioskModeEnabled
             || supportUploadURLString != nil
+            || !supportUploadHostSuffixes.isEmpty
+            || supportUploadTokenKeychainService != nil
             || updateChannel != "github"
             || sparkleAppcastURLString != nil
     }
@@ -39,8 +43,23 @@ struct EnterprisePolicySnapshot: Equatable {
     }
 
     var supportUploadURL: URL? {
-        guard let supportUploadURLString else { return nil }
-        return URL(string: supportUploadURLString)
+        guard let supportUploadURLString,
+              let url = URL(string: supportUploadURLString),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https",
+              let host = url.host,
+              !host.isEmpty,
+              Self.host(host, matchesAllowedSuffixes: supportUploadHostSuffixes),
+              !NetworkStreamValidator.isPrivateOrLocalHost(host)
+        else {
+            return nil
+        }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        guard components?.user == nil, components?.password == nil else {
+            return nil
+        }
+        return url
     }
 
     var sparkleAppcastURL: URL? {
@@ -77,6 +96,8 @@ struct EnterprisePolicySnapshot: Equatable {
             "Kiosk mode: \(kioskModeEnabled ? "Yes" : "No")",
             "Kiosk playlist: \(kioskPlaylistURLString ?? "Not configured")",
             "Support upload endpoint: \(supportUploadURLString ?? "Not configured")",
+            "Support upload host suffixes: \(supportUploadHostSuffixes.isEmpty ? "Any public host" : supportUploadHostSuffixes.joined(separator: ", "))",
+            "Support upload Keychain service: \(supportUploadTokenKeychainService ?? "Not configured")",
             "Update channel: \(updateChannel)",
             "Sparkle appcast URL: \(sparkleAppcastURLString ?? "Not configured")",
             "Allowed stream host suffixes: \(allowedStreamHostSuffixes.isEmpty ? "Any public host" : allowedStreamHostSuffixes.joined(separator: ", "))"
@@ -107,6 +128,8 @@ enum EnterprisePolicy {
         static let kioskModeEnabled = "EnterpriseKioskModeEnabled"
         static let kioskPlaylistURL = "EnterpriseKioskPlaylistURL"
         static let supportUploadURL = "EnterpriseSupportUploadURL"
+        static let supportUploadHostSuffixes = "EnterpriseSupportUploadHostSuffixes"
+        static let supportUploadTokenKeychainService = "EnterpriseSupportUploadTokenKeychainService"
         static let updateChannel = "EnterpriseUpdateChannel"
         static let sparkleAppcastURL = "EnterpriseSparkleAppcastURL"
     }
@@ -126,6 +149,8 @@ enum EnterprisePolicy {
             kioskModeEnabled: bool(forKey: Key.kioskModeEnabled, defaults: defaults),
             kioskPlaylistURLString: clean(defaults.string(forKey: Key.kioskPlaylistURL)),
             supportUploadURLString: clean(defaults.string(forKey: Key.supportUploadURL)),
+            supportUploadHostSuffixes: stringList(forKey: Key.supportUploadHostSuffixes, defaults: defaults),
+            supportUploadTokenKeychainService: clean(defaults.string(forKey: Key.supportUploadTokenKeychainService)),
             updateChannel: clean(defaults.string(forKey: Key.updateChannel))?.lowercased() ?? "github",
             sparkleAppcastURLString: clean(defaults.string(forKey: Key.sparkleAppcastURL))
         )

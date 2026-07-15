@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Video Player"
 BUNDLE_ID="${BUNDLE_ID:-com.jaysonguglietta.videoplayer}"
-APP_VERSION="${APP_VERSION:-0.1.8}"
-APP_BUILD="${APP_BUILD:-9}"
+APP_VERSION="${APP_VERSION:-2.0}"
+APP_BUILD="${APP_BUILD:-10}"
 BUILD_DIR="$ROOT_DIR/Build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -41,6 +41,13 @@ esac
 UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE="false"
 if [[ "$DEVELOPMENT_BUILD" == "1" && "$BUILD_CONFIGURATION" == "debug" && "$ALLOW_UNVERIFIED_EXTERNAL_ENGINES" == "1" ]]; then
     UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE="true"
+fi
+
+if [[ "$ENABLE_EXTERNAL_ENGINES" == "1" && -z "$TRUSTED_EXTERNAL_ENGINE_TEAM_IDS" && "$UNVERIFIED_EXTERNAL_ENGINES_PLIST_VALUE" != "true" ]]; then
+    echo "TRUSTED_EXTERNAL_ENGINE_TEAM_IDS is required when ENABLE_EXTERNAL_ENGINES=1." >&2
+    echo "Find the Team ID for an installed engine with: codesign -dv /Applications/VLC.app 2>&1 | grep TeamIdentifier" >&2
+    echo "For debug-only local testing without signature checks, set BUILD_CONFIGURATION=debug and ALLOW_UNVERIFIED_EXTERNAL_ENGINES=1." >&2
+    exit 1
 fi
 
 cd "$ROOT_DIR"

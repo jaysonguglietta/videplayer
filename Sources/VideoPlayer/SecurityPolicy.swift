@@ -131,43 +131,77 @@ enum PrivacySettings {
 }
 
 enum ExternalMediaEngineTrust {
+    private static let stateLock = NSLock()
+    private static var cachedDecisions: [String: CachedTrustDecision] = [:]
+    private static var latestFailureMessage: String?
+
+    static var lastFailureMessage: String? {
+        stateLock.withLock { latestFailureMessage }
+    }
+
     static func isEngineAllowed(at url: URL, defaults: UserDefaults = .standard) -> Bool {
         guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            recordFailure("This app build does not allow external VLC/mpv engines.")
             AppLogger.debug("External engine rejected because this build does not allow external engines: \(url.path)")
             return false
         }
         guard PrivacySettings.externalMediaEnginesEnabled(defaults: defaults) else {
+            recordFailure("External VLC/mpv engines are disabled in Playback settings.")
             AppLogger.debug("External engine rejected because user opt-in is disabled: \(url.path)")
             return false
         }
 
         if AppSecurityPolicy.allowsUnverifiedExternalEnginesForDevelopment {
+            clearFailure()
             AppLogger.warning("External engine allowed by debug-only unverified override: \(url.path)", flush: true)
             return true
         }
 
         let trustedTeamIDs = AppSecurityPolicy.trustedExternalEngineTeamIDs
         guard !trustedTeamIDs.isEmpty else {
+            let detail = "No trusted external VLC/mpv Team IDs are configured for this build."
+            recordFailure(detail)
             AppLogger.warning("External engine rejected because no trusted Team IDs are configured: \(url.path)", flush: true)
             return false
+        }
+
+        let cacheKey = "\(url.path)|\(trustedTeamIDs.sorted().joined(separator: ","))"
+        if let cached = cachedDecision(for: cacheKey) {
+            if cached.allowed {
+                clearFailure()
+            } else {
+                recordFailure(cached.detail)
+            }
+            AppLogger.debug("External engine trust cache hit allowed=\(cached.allowed) path=\(url.path)")
+            return cached.allowed
         }
 
         do {
             let target = verificationTarget(for: url)
             AppLogger.info("Validating external engine target=\(target.path) requestedPath=\(url.path)", flush: true)
             guard let teamID = try CodeSignatureVerifier.teamIdentifier(forCodeAt: target) else {
+                let detail = "VLC/mpv was rejected because no Team ID was found in its code signature."
+                recordDecision(cacheKey: cacheKey, allowed: false, detail: detail)
                 AppLogger.warning("External engine rejected because no Team ID was found: \(target.path)", flush: true)
                 return false
             }
             try CodeSignatureVerifier.assessGatekeeperExecute(for: target)
             let allowed = trustedTeamIDs.contains(teamID)
             if allowed {
+                recordDecision(cacheKey: cacheKey, allowed: true, detail: "External VLC/mpv trust checks passed.")
                 AppLogger.info("External engine trusted target=\(target.path) teamID=\(teamID)", flush: true)
             } else {
+                recordDecision(
+                    cacheKey: cacheKey,
+                    allowed: false,
+                    detail: "VLC/mpv Team ID \(teamID) is not in this build's trusted external engine list."
+                )
                 AppLogger.warning("External engine rejected target=\(target.path) teamID=\(teamID) trusted=\(trustedTeamIDs.sorted().joined(separator: ","))", flush: true)
             }
             return allowed
         } catch {
+            let detail = "VLC/mpv trust validation failed: \(error.localizedDescription)"
+            recordDecision(cacheKey: cacheKey, allowed: false, detail: detail)
             AppLogger.error("External engine validation failed path=\(url.path) error=\(error.localizedDescription)", flush: true)
             return false
         }
@@ -182,11 +216,55 @@ enum ExternalMediaEngineTrust {
         }
         return url
     }
+
+    private static func cachedDecision(for cacheKey: String) -> CachedTrustDecision? {
+        stateLock.withLock {
+            guard let decision = cachedDecisions[cacheKey] else { return nil }
+            guard Date().timeIntervalSince(decision.createdAt) <= 60 else {
+                cachedDecisions.removeValue(forKey: cacheKey)
+                return nil
+            }
+            return decision
+        }
+    }
+
+    private static func recordDecision(cacheKey: String, allowed: Bool, detail: String) {
+        stateLock.withLock {
+            cachedDecisions[cacheKey] = CachedTrustDecision(
+                allowed: allowed,
+                detail: detail,
+                createdAt: Date()
+            )
+            latestFailureMessage = allowed ? nil : detail
+        }
+    }
+
+    private static func recordFailure(_ detail: String) {
+        stateLock.withLock {
+            latestFailureMessage = detail
+        }
+    }
+
+    private static func clearFailure() {
+        stateLock.withLock {
+            latestFailureMessage = nil
+        }
+    }
+
+    private struct CachedTrustDecision {
+        let allowed: Bool
+        let detail: String
+        let createdAt: Date
+    }
 }
 
 enum CodeSignatureVerifier {
     static func teamIdentifier(forCodeAt url: URL) throws -> String? {
         try verifyStrictCodeSignature(forCodeAt: url)
+        return try displayedTeamIdentifier(forCodeAt: url)
+    }
+
+    static func displayedTeamIdentifier(forCodeAt url: URL) throws -> String? {
         let result = try run("/usr/bin/codesign", arguments: ["-dv", "--verbose=4", url.path])
         guard result.status == 0 else {
             throw CodeSignatureVerificationError.commandFailed(result.combinedOutput)
@@ -265,6 +343,15 @@ enum CodeSignatureVerifier {
         process.standardOutput = output
         process.standardError = error
 
+        let stdout = LockedProcessOutput()
+        let stderr = LockedProcessOutput()
+        output.fileHandleForReading.readabilityHandler = { handle in
+            stdout.append(handle.availableData)
+        }
+        error.fileHandleForReading.readabilityHandler = { handle in
+            stderr.append(handle.availableData)
+        }
+
         let group = DispatchGroup()
         group.enter()
         process.terminationHandler = { _ in
@@ -278,15 +365,37 @@ enum CodeSignatureVerifier {
             if group.wait(timeout: .now() + .seconds(2)) != .success {
                 process.interrupt()
             }
+            output.fileHandleForReading.readabilityHandler = nil
+            error.fileHandleForReading.readabilityHandler = nil
             AppLogger.error("Security command timed out after 10s: \(commandDescription)", flush: true)
             throw CodeSignatureVerificationError.commandTimedOut(commandDescription)
         }
 
-        let stdout = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        output.fileHandleForReading.readabilityHandler = nil
+        error.fileHandleForReading.readabilityHandler = nil
+        stdout.append(output.fileHandleForReading.readDataToEndOfFile())
+        stderr.append(error.fileHandleForReading.readDataToEndOfFile())
         let elapsed = Date().timeIntervalSince(startedAt)
         AppLogger.info(String(format: "Security command finished status=%d elapsed=%.2fs command=%@", process.terminationStatus, elapsed, commandDescription), flush: true)
-        return CommandResult(status: process.terminationStatus, output: stdout, error: stderr)
+        return CommandResult(status: process.terminationStatus, output: stdout.stringValue, error: stderr.stringValue)
+    }
+}
+
+private final class LockedProcessOutput {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.withLock {
+            data.append(chunk)
+        }
+    }
+
+    var stringValue: String {
+        lock.withLock {
+            String(data: data, encoding: .utf8) ?? ""
+        }
     }
 }
 

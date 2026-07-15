@@ -138,6 +138,13 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertEqual(MediaPersistence.storageString(for: url), "https://example.com/movie.m3u8")
     }
 
+    func testAppLoggerRedactsSensitiveURLsAndPaths() throws {
+        let streamURL = try XCTUnwrap(URL(string: "https://user:pass@example.com/movie.m3u8?token=secret#frag"))
+        XCTAssertEqual(AppLogger.redactedURLString(streamURL), "https://example.com/movie.m3u8?[REDACTED]#[REDACTED]")
+        XCTAssertFalse(AppLogger.redactedFilePath(NSHomeDirectory() + "/Movies/private.mkv").contains(NSHomeDirectory()))
+        XCTAssertEqual(AppLogger.redactedFilePath("/Volumes/downloads/complete/private.mkv"), "/Volumes/[REDACTED]")
+    }
+
     func testPlaybackStateStoreMigratesStoredNetworkSecrets() throws {
         let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -355,6 +362,8 @@ final class SecurityHelpersTests: XCTestCase {
         defaults.set(["media.example.com", ".trusted.example"], forKey: EnterprisePolicy.Key.allowedStreamHostSuffixes)
         defaults.set(true, forKey: EnterprisePolicy.Key.kioskModeEnabled)
         defaults.set("https://support.example.com/upload", forKey: EnterprisePolicy.Key.supportUploadURL)
+        defaults.set(["support.example.com"], forKey: EnterprisePolicy.Key.supportUploadHostSuffixes)
+        defaults.set("videoplayer-support-upload-token", forKey: EnterprisePolicy.Key.supportUploadTokenKeychainService)
         defaults.set("sparkle", forKey: EnterprisePolicy.Key.updateChannel)
         defaults.set("https://updates.example.com/appcast.xml", forKey: EnterprisePolicy.Key.sparkleAppcastURL)
 
@@ -364,12 +373,36 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertTrue(policy.forceDisablePlaybackHistory)
         XCTAssertTrue(policy.kioskModeEnabled)
         XCTAssertEqual(policy.supportUploadURL?.host, "support.example.com")
+        XCTAssertEqual(policy.supportUploadHostSuffixes, ["support.example.com"])
+        XCTAssertEqual(policy.supportUploadTokenKeychainService, "videoplayer-support-upload-token")
         XCTAssertEqual(policy.updateChannel, "sparkle")
         XCTAssertEqual(policy.sparkleAppcastURL?.lastPathComponent, "appcast.xml")
         XCTAssertTrue(policy.allowsStreamHost("cdn.media.example.com"))
         XCTAssertTrue(policy.allowsStreamHost("video.trusted.example"))
         XCTAssertFalse(policy.allowsStreamHost("untrusted.example.net"))
         XCTAssertTrue(policy.hasManagedRestrictions)
+    }
+
+    func testEnterprisePolicyRejectsUnsafeSupportUploadURLs() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("http://support.example.com/upload", forKey: EnterprisePolicy.Key.supportUploadURL)
+        XCTAssertNil(EnterprisePolicy.snapshot(defaults: defaults).supportUploadURL)
+
+        defaults.set("https://127.0.0.1/upload", forKey: EnterprisePolicy.Key.supportUploadURL)
+        XCTAssertNil(EnterprisePolicy.snapshot(defaults: defaults).supportUploadURL)
+
+        defaults.set("https://user:pass@support.example.com/upload", forKey: EnterprisePolicy.Key.supportUploadURL)
+        XCTAssertNil(EnterprisePolicy.snapshot(defaults: defaults).supportUploadURL)
+
+        defaults.set("https://support.example.com/upload", forKey: EnterprisePolicy.Key.supportUploadURL)
+        defaults.set(["support.example.com"], forKey: EnterprisePolicy.Key.supportUploadHostSuffixes)
+        XCTAssertEqual(EnterprisePolicy.snapshot(defaults: defaults).supportUploadURL?.host, "support.example.com")
+
+        defaults.set(["other.example.com"], forKey: EnterprisePolicy.Key.supportUploadHostSuffixes)
+        XCTAssertNil(EnterprisePolicy.snapshot(defaults: defaults).supportUploadURL)
     }
 
     func testPrivacySettingsHonorEnterprisePolicyLocks() throws {
@@ -441,6 +474,7 @@ final class SecurityHelpersTests: XCTestCase {
             EnterpriseLicenseManager.status(licenseURL: unsignedURL, publicKeyBase64: nil),
             .unverified(license)
         )
+        XCTAssertFalse(EnterpriseLicenseManager.status(licenseURL: unsignedURL, publicKeyBase64: nil).isOperationallyUsable)
 
         let privateKey = P256.Signing.PrivateKey()
         let signature = try privateKey.signature(for: Data(license.signedPayload.utf8))
@@ -458,6 +492,22 @@ final class SecurityHelpersTests: XCTestCase {
             ),
             .valid(license)
         )
+    }
+
+    func testEnterpriseLicenseRejectsOversizedLicenseFiles() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let oversizedURL = directory.appendingPathComponent("license.json")
+        let oversized = Data(repeating: 65, count: 1_000_001)
+        try oversized.write(to: oversizedURL)
+
+        guard case .invalid(let reason) = EnterpriseLicenseManager.status(licenseURL: oversizedURL, publicKeyBase64: nil) else {
+            return XCTFail("Expected oversized license to be invalid")
+        }
+        XCTAssertTrue(reason.contains("too large"))
     }
 
     func testPlaybackDiagnosticsRecommendsExternalEngineForRequiredCodec() throws {
@@ -532,6 +582,200 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertEqual(report.tags["training"], 2)
     }
 
+    func testLibraryCatalogDetectsQualityAndVersionGroups() {
+        let items = [
+            MediaItem(url: URL(fileURLWithPath: "/media/Feature.1993.1080p.BluRay.x264.mkv")),
+            MediaItem(url: URL(fileURLWithPath: "/media/Feature.1993.2160p.UHD.x265.mkv")),
+            MediaItem(url: URL(fileURLWithPath: "/media/Show.Name.S01E01.720p.WEB.mkv")),
+            MediaItem(url: URL(fileURLWithPath: "/media/Show.Name.S01E02.720p.WEB.mkv"))
+        ]
+
+        let report = LibraryCatalog.report(playlist: items, records: [:])
+
+        XCTAssertEqual(report.qualityCounts["1080p"], 1)
+        XCTAssertEqual(report.qualityCounts["4K/UHD"], 1)
+        XCTAssertEqual(report.qualityCounts["720p"], 2)
+        XCTAssertGreaterThanOrEqual(report.duplicateOrVersionGroups, 1)
+        XCTAssertEqual(report.tvEpisodeGroups, 1)
+        XCTAssertTrue(report.text.contains("Largest Groups"))
+    }
+
+    func testSubtitleTrackSelectorHonorsPreferences() {
+        let options = [
+            TrackOption(id: -1, name: "Subtitles Off"),
+            TrackOption(id: 1, name: "English"),
+            TrackOption(id: 2, name: "Spanish Forced")
+        ]
+
+        XCTAssertEqual(SubtitleTrackSelector.preferredTrackID(
+            options: options,
+            preferences: SubtitlePreferences(selectionMode: .off, preferredLanguage: "en", stylePreset: .system)
+        ), -1)
+        XCTAssertEqual(SubtitleTrackSelector.preferredTrackID(
+            options: options,
+            preferences: SubtitlePreferences(selectionMode: .preferredLanguage, preferredLanguage: "es", stylePreset: .large)
+        ), 2)
+        XCTAssertEqual(SubtitleTrackSelector.preferredTrackID(
+            options: options,
+            preferences: SubtitlePreferences(selectionMode: .forcedOnly, preferredLanguage: "en", stylePreset: .highContrast)
+        ), 2)
+    }
+
+    func testPlaybackStateStorePersistsStreamBookmarksOnlyWhenHistoryEnabled() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PlaybackStateStore(defaults: defaults)
+        let stream = MediaItem(url: try XCTUnwrap(URL(string: "https://user:pass@example.com/live.m3u8?token=secret")))
+
+        store.addStreamBookmark(stream)
+        XCTAssertTrue(store.loadStreamBookmarks().isEmpty)
+
+        store.setSavePlaybackHistoryEnabled(true)
+        store.addStreamBookmark(stream)
+
+        XCTAssertEqual(store.loadStreamBookmarks().first?.url.absoluteString, "https://example.com/live.m3u8")
+    }
+
+    func testPlaybackStateStorePersistsSubtitlePreferences() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PlaybackStateStore(defaults: defaults)
+        let preferences = SubtitlePreferences(
+            selectionMode: .preferredLanguage,
+            preferredLanguage: "es",
+            stylePreset: .highContrast
+        )
+
+        store.saveSubtitlePreferences(preferences)
+
+        XCTAssertEqual(store.loadSubtitlePreferences(), preferences)
+    }
+
+    func testMediaMetadataCacheSavesMetadataAndPoster() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let item = MediaItem(url: try XCTUnwrap(URL(string: "file:///Users/example/Movie.mp4")))
+        let metadata = MediaMetadata(
+            title: "Movie",
+            location: "/Users/example/Movie.mp4",
+            kind: "MP4",
+            size: "10 MB",
+            duration: "1:30",
+            dimensions: "1920x1080",
+            modified: "Today",
+            savedPosition: "--",
+            extraDetails: ["Video Tracks: hvc1", "Audio Tracks: aac"]
+        )
+        let posterData = Data("poster".utf8)
+
+        let cache = MediaMetadataCache(directory: directory)
+        let result = try cache.save(item: item, metadata: metadata, posterData: posterData)
+        let saved = try XCTUnwrap(cache.load(item: item))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.metadataURL.path))
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(result.posterURL)), posterData)
+        XCTAssertEqual(saved.title, "Movie")
+        XCTAssertEqual(saved.posterFileName, "\(MediaMetadataCache.key(for: item.url)).png")
+        XCTAssertEqual(saved.fields.map(\.value), ["Video Tracks: hvc1", "Audio Tracks: aac"])
+    }
+
+    func testMediaMetadataCacheRedactsNetworkSourceSecrets() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let item = MediaItem(url: try XCTUnwrap(URL(string: "https://user:pass@example.com/movie.m3u8?token=secret#frag")))
+        let metadata = MediaMetadata(
+            title: "Stream",
+            location: "https://example.com/movie.m3u8",
+            kind: "Network Stream",
+            size: "--",
+            duration: "--",
+            dimensions: "--",
+            modified: "--",
+            savedPosition: "--",
+            extraDetails: []
+        )
+
+        let cache = MediaMetadataCache(directory: directory)
+        _ = try cache.save(item: item, metadata: metadata, posterData: nil)
+        let saved = try XCTUnwrap(cache.load(item: item))
+
+        XCTAssertEqual(saved.sourceURL, "https://example.com/movie.m3u8")
+        XCTAssertNil(saved.posterFileName)
+    }
+
+    func testFleetDiagnosticsJSONIncludesEnterpriseAndLibraryState() throws {
+        let item = MediaItem(url: URL(fileURLWithPath: "/media/Feature.1080p.mkv"))
+        let policy = EnterprisePolicySnapshot(
+            organizationName: "Acme",
+            forceDisableExternalMediaEngines: false,
+            forceBlockPrivateNetworkStreams: true,
+            forceDisablePlaybackHistory: false,
+            forceClearHistoryOnQuit: false,
+            disableUpdateChecks: false,
+            disableSupportBundleLogExport: false,
+            redactSupportBundlePaths: true,
+            requireLicense: false,
+            allowedStreamHostSuffixes: ["media.example.com"],
+            kioskModeEnabled: false,
+            kioskPlaylistURLString: nil,
+            supportUploadURLString: nil,
+            supportUploadHostSuffixes: [],
+            supportUploadTokenKeychainService: nil,
+            updateChannel: "github",
+            sparkleAppcastURLString: nil
+        )
+        let libraryReport = LibraryCatalog.report(playlist: [item], records: [:])
+        let readiness = ReleaseReadinessReport(checks: [
+            ReadinessCheck(title: "Example", status: .pass, detail: "Ready")
+        ])
+        let recovery = PlaybackRecoveryState(
+            previousSessionEndedCleanly: true,
+            lastPlaybackTitle: item.title,
+            lastPlaybackURL: item.url.absoluteString,
+            lastPlaybackAt: Date(timeIntervalSince1970: 0),
+            lastHangWarningAt: nil
+        )
+
+        let document = FleetDiagnostics.document(
+            selectedItem: item,
+            playlist: [item],
+            currentEngine: "VLC",
+            vlcAvailable: true,
+            mpvAvailable: false,
+            policy: policy,
+            licenseStatus: .notInstalled,
+            releaseReadiness: readiness,
+            libraryReport: libraryReport,
+            recoveryState: recovery,
+            subtitlePreferences: .default,
+            now: Date(timeIntervalSince1970: 0)
+        )
+        let json = try XCTUnwrap(String(data: FleetDiagnostics.jsonData(from: document), encoding: .utf8))
+
+        XCTAssertTrue(json.contains("\"playlistCount\" : 1"))
+        XCTAssertTrue(json.contains("\"organizationName\" : \"Acme\""))
+        XCTAssertTrue(json.contains("\"currentEngine\" : \"VLC\""))
+    }
+
+    func testPlaybackRecoveryPreservesPreviousSessionCleanStateOnLaunch() throws {
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        PlaybackRecovery.markCleanShutdown(defaults: defaults)
+        PlaybackRecovery.markLaunch(defaults: defaults)
+        XCTAssertTrue(PlaybackRecovery.state(defaults: defaults).previousSessionEndedCleanly)
+
+        PlaybackRecovery.markLaunch(defaults: defaults)
+        XCTAssertFalse(PlaybackRecovery.state(defaults: defaults).previousSessionEndedCleanly)
+    }
+
     func testSupportBundleUploaderBuildsMultipartBody() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -547,6 +791,51 @@ final class SecurityHelpersTests: XCTestCase {
         XCTAssertTrue(text?.contains("filename=\"support-report.txt\"") == true)
         XCTAssertTrue(text?.contains("report") == true)
         XCTAssertTrue(text?.contains("--Boundary--") == true)
+    }
+
+    func testSupportBundleUploaderValidatesEndpoints() async throws {
+        let publicURL = try XCTUnwrap(URL(string: "https://support.example.com/upload"))
+        let validated = try await SupportBundleUploader.validatedEndpoint(
+            publicURL,
+            allowedHostSuffixes: ["example.com"],
+            resolvedAddressesForHost: { _ in ["93.184.216.34"] }
+        )
+        XCTAssertEqual(validated, publicURL)
+        XCTAssertEqual(SupportBundleUploader.authorizationHeaderValue(forBearerToken: " token "), "Bearer token")
+        XCTAssertNil(SupportBundleUploader.authorizationHeaderValue(forBearerToken: " "))
+
+        let httpURL = try XCTUnwrap(URL(string: "http://support.example.com/upload"))
+        do {
+            _ = try await SupportBundleUploader.validatedEndpoint(
+                httpURL,
+                resolvedAddressesForHost: { _ in ["93.184.216.34"] }
+            )
+            XCTFail("Expected HTTP support upload endpoint to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("HTTPS"))
+        }
+
+        do {
+            _ = try await SupportBundleUploader.validatedEndpoint(
+                publicURL,
+                allowedHostSuffixes: ["support.example.net"],
+                resolvedAddressesForHost: { _ in ["93.184.216.34"] }
+            )
+            XCTFail("Expected support upload endpoint outside allow-list to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("allow-list"))
+        }
+
+        let privateDNSURL = try XCTUnwrap(URL(string: "https://support.example.com/upload"))
+        do {
+            _ = try await SupportBundleUploader.validatedEndpoint(
+                privateDNSURL,
+                resolvedAddressesForHost: { _ in ["127.0.0.1"] }
+            )
+            XCTFail("Expected private DNS support upload endpoint to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("public addresses"))
+        }
     }
 
     func testEnterpriseActivationRequestTrimsInputsAndIsSerializable() throws {
@@ -577,6 +866,8 @@ final class SecurityHelpersTests: XCTestCase {
             kioskModeEnabled: false,
             kioskPlaylistURLString: nil,
             supportUploadURLString: nil,
+            supportUploadHostSuffixes: [],
+            supportUploadTokenKeychainService: nil,
             updateChannel: "sparkle",
             sparkleAppcastURLString: nil
         )
@@ -584,6 +875,182 @@ final class SecurityHelpersTests: XCTestCase {
         let report = ReleaseReadiness.report(policy: policy)
         XCTAssertTrue(report.text.contains("Sparkle Readiness"))
         XCTAssertTrue(report.text.contains("EnterpriseSparkleAppcastURL"))
+    }
+
+    func testUpdateReleaseSelectorCanIncludeSignedBetaChannelCandidates() throws {
+        let stable = try makeRelease(tagName: "v1.0.0")
+        let beta = try makeRelease(tagName: "v1.1.0-beta.1", isPrerelease: true)
+
+        XCTAssertEqual(
+            UpdateReleaseSelector.newestPublishedRelease(from: [stable, beta])?.tagName,
+            "v1.0.0"
+        )
+        XCTAssertEqual(
+            UpdateReleaseSelector.newestPublishedRelease(from: [stable, beta], includePrereleases: true)?.tagName,
+            "v1.1.0-beta.1"
+        )
+    }
+
+    func testReleaseReadinessAcceptsManagedStableAndBetaChannels() {
+        for updateChannel in ["github-stable", "github-beta"] {
+            let policy = EnterprisePolicySnapshot(
+                organizationName: nil,
+                forceDisableExternalMediaEngines: false,
+                forceBlockPrivateNetworkStreams: false,
+                forceDisablePlaybackHistory: false,
+                forceClearHistoryOnQuit: false,
+                disableUpdateChecks: false,
+                disableSupportBundleLogExport: false,
+                redactSupportBundlePaths: true,
+                requireLicense: false,
+                allowedStreamHostSuffixes: [],
+                kioskModeEnabled: false,
+                kioskPlaylistURLString: nil,
+                supportUploadURLString: nil,
+                supportUploadHostSuffixes: [],
+                supportUploadTokenKeychainService: nil,
+                updateChannel: updateChannel,
+                sparkleAppcastURLString: nil
+            )
+
+            let report = ReleaseReadiness.report(policy: policy)
+            XCTAssertFalse(report.text.contains("Unknown update channel"))
+        }
+    }
+
+    func testNetworkStreamValidatorRejectsEmbeddedCredentials() {
+        XCTAssertNil(NetworkStreamValidator.validatedURL(from: "https://user:secret@example.com/live.m3u8"))
+        XCTAssertNotNil(NetworkStreamValidator.validatedURL(from: "https://example.com/live.m3u8"))
+    }
+
+    func testPlaybackRoutePlannerPrefersTrustedEnginesAndFailsClosed() throws {
+        let mkv = MediaItem(url: URL(fileURLWithPath: "/tmp/Movie.mkv"))
+        let assessment = NativePlaybackAssessment(
+            routing: .requiresExternal,
+            reason: "Requires external engine",
+            detectedVideoCodecs: ["hvc1"]
+        )
+        let nativeExtensions: Set<String> = ["mp4", "mov"]
+
+        XCTAssertEqual(PlaybackRoutePlanner.route(for: PlaybackRouteContext(
+            item: mkv,
+            nativeAssessment: assessment,
+            nativeExtensions: nativeExtensions,
+            vlcAvailable: true,
+            mpvAvailable: true
+        )), .vlc)
+        XCTAssertEqual(PlaybackRoutePlanner.route(for: PlaybackRouteContext(
+            item: mkv,
+            nativeAssessment: assessment,
+            nativeExtensions: nativeExtensions,
+            vlcAvailable: false,
+            mpvAvailable: true
+        )), .mpv)
+        XCTAssertEqual(PlaybackRoutePlanner.route(for: PlaybackRouteContext(
+            item: mkv,
+            nativeAssessment: assessment,
+            nativeExtensions: nativeExtensions,
+            vlcAvailable: false,
+            mpvAvailable: false
+        )), .none)
+    }
+
+    func testLibraryDatabaseIndexesRecordsPositionsAndProfiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerDatabaseTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try LibraryDatabase(url: directory.appendingPathComponent("Library.sqlite3"))
+        let suiteName = "VideoPlayerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PlaybackStateStore(defaults: defaults, libraryDatabase: database)
+        store.setSavePlaybackHistoryEnabled(true)
+
+        let item = MediaItem(url: URL(fileURLWithPath: "/tmp/Feature.mkv"))
+        store.indexLibraryItems([item])
+        store.savePosition(73, for: item)
+        let record = MediaLibraryRecord(isFavorite: true, isWatched: false, tags: ["demo"], updatedAt: Date())
+        store.saveMediaLibraryRecord(record, for: item)
+        let profile = MediaPlaybackProfile(
+            speedTitle: "1.25x",
+            audioPresetName: AudioPreset.speechBoost.rawValue,
+            qualityPresetName: PlaybackQualityPreset.cinema.rawValue,
+            audioDelaySeconds: 0.2,
+            subtitleDelaySeconds: -0.3,
+            updatedAt: Date()
+        )
+        store.savePlaybackProfile(profile, for: item)
+
+        XCTAssertEqual(store.indexedLibraryItems(), [item])
+        XCTAssertEqual(store.position(for: item), 73)
+        XCTAssertEqual(store.mediaLibraryRecord(for: item).tags, ["demo"])
+        XCTAssertEqual(store.playbackProfile(for: item), profile)
+
+        store.clearPlaybackHistory()
+        XCTAssertTrue(store.indexedLibraryItems().isEmpty)
+        XCTAssertEqual(store.position(for: item), 0)
+    }
+
+    func testLibraryScanServiceLimitsAndSortsMedia() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerScanTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data().write(to: directory.appendingPathComponent("B.mp4"))
+        try Data().write(to: directory.appendingPathComponent("A.mkv"))
+        try Data().write(to: directory.appendingPathComponent("notes.txt"))
+
+        let result = await LibraryScanService.scan(
+            urls: [directory],
+            mediaExtensions: ["mp4", "mkv"],
+            maximumMediaFiles: 10,
+            maximumEnumeratedItems: 10
+        )
+
+        XCTAssertEqual(result.mediaURLs.map(\.lastPathComponent), ["A.mkv", "B.mp4"])
+        XCTAssertFalse(result.wasLimited)
+        XCTAssertFalse(result.wasCancelled)
+    }
+
+    func testSecurityScopedBookmarkRoundTrip() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerBookmarkTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let data = try SecurityScopedBookmarks.data(for: directory)
+        let resolved = try SecurityScopedBookmarks.resolve(data)
+        XCTAssertEqual(resolved.url.standardizedFileURL, directory.standardizedFileURL)
+    }
+
+    func testMediaMetadataCacheCanReplaceAndRemovePoster() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoPlayerPosterTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let item = MediaItem(url: URL(fileURLWithPath: "/tmp/Movie.mp4"))
+        let metadata = MediaMetadata(
+            title: "Movie",
+            location: "/tmp/Movie.mp4",
+            kind: "MP4",
+            size: "1 MB",
+            duration: "1:00",
+            dimensions: "1920x1080",
+            modified: "Today",
+            savedPosition: "--",
+            extraDetails: []
+        )
+        let cache = MediaMetadataCache(directory: directory)
+        _ = try cache.save(item: item, metadata: metadata, posterData: nil)
+        let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+
+        let posterURL = try cache.replacePoster(item: item, imageData: png)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: posterURL.path))
+        XCTAssertNotNil(try cache.load(item: item)?.posterFileName)
+
+        try cache.removePoster(item: item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: posterURL.path))
+        XCTAssertNil(try cache.load(item: item)?.posterFileName)
     }
 
     private func makeRelease(

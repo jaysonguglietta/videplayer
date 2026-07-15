@@ -12,12 +12,20 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "VideoPlayer",
-            path: "Sources/VideoPlayer"
+            path: "Sources/VideoPlayer",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "VideoPlayerTests",
             dependencies: ["VideoPlayer"],
             path: "Tests/VideoPlayerTests"
+        ),
+        .testTarget(
+            name: "VideoPlayerUITests",
+            dependencies: ["VideoPlayer"],
+            path: "Tests/VideoPlayerUITests"
         )
     ]
 )

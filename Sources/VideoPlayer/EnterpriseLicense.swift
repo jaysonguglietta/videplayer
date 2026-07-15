@@ -70,9 +70,9 @@ enum EnterpriseLicenseStatus: Equatable {
 
     var isOperationallyUsable: Bool {
         switch self {
-        case .valid, .unverified:
+        case .valid:
             true
-        case .notInstalled, .expired, .invalid:
+        case .notInstalled, .expired, .unverified, .invalid:
             false
         }
     }
@@ -120,6 +120,8 @@ enum EnterpriseLicenseStatus: Equatable {
 }
 
 enum EnterpriseLicenseManager {
+    private static let maximumLicenseFileBytes: UInt64 = 1_000_000
+
     static var licensePublicKeyBase64: String? {
         clean(Bundle.main.object(forInfoDictionaryKey: "VPEnterpriseLicensePublicKey") as? String)
     }
@@ -145,7 +147,7 @@ enum EnterpriseLicenseManager {
         }
 
         do {
-            let data = try Data(contentsOf: licenseURL)
+            let data = try licenseData(from: licenseURL)
             let envelope = try JSONDecoder().decode(EnterpriseLicenseEnvelope.self, from: data)
 
             if let expirationDate = envelope.license.expirationDate, expirationDate < now {
@@ -169,7 +171,7 @@ enum EnterpriseLicenseManager {
     }
 
     static func installLicense(from sourceURL: URL, destinationURL: URL = defaultLicenseURL) throws {
-        let data = try Data(contentsOf: sourceURL)
+        let data = try licenseData(from: sourceURL)
         _ = try JSONDecoder().decode(EnterpriseLicenseEnvelope.self, from: data)
         try FileManager.default.createDirectory(
             at: destinationURL.deletingLastPathComponent(),
@@ -202,5 +204,25 @@ enum EnterpriseLicenseManager {
             return nil
         }
         return trimmed
+    }
+
+    private static func licenseData(from url: URL) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let fileSize = attributes[.size] as? NSNumber,
+           fileSize.uint64Value > maximumLicenseFileBytes {
+            throw EnterpriseLicenseError.fileTooLarge(maximumLicenseFileBytes)
+        }
+        return try Data(contentsOf: url)
+    }
+}
+
+enum EnterpriseLicenseError: LocalizedError, Equatable {
+    case fileTooLarge(UInt64)
+
+    var errorDescription: String? {
+        switch self {
+        case .fileTooLarge(let maximumBytes):
+            "The license file is too large. License JSON files must be \(maximumBytes / 1_000_000) MB or smaller."
+        }
     }
 }

@@ -76,18 +76,48 @@ enum MediaEngineDoctor {
         }
 
         let target = ExternalMediaEngineTrust.verificationTarget(for: url)
-        let teamID = (try? CodeSignatureVerifier.teamIdentifier(forCodeAt: target)) ?? nil
-        let trusted = ExternalMediaEngineTrust.isEngineAllowed(at: url)
+        let teamID = try? CodeSignatureVerifier.displayedTeamIdentifier(forCodeAt: target)
+        let trust = trustAssessment(for: target, teamID: teamID)
         return MediaEngineDiagnostic(
             name: name,
             path: path,
             exists: exists,
             executableOrReadable: accessible,
-            trusted: trusted,
+            trusted: trust.trusted,
             teamID: teamID,
-            detail: trusted
-                ? "Code signature, Gatekeeper, user opt-in, and configured Team ID checks passed."
-                : "Trust checks failed or this build/user setting does not allow external engines."
+            detail: trust.detail
         )
+    }
+
+    private static func trustAssessment(for target: URL, teamID: String?) -> (trusted: Bool, detail: String) {
+        guard AppSecurityPolicy.externalMediaEnginesAvailable else {
+            return (false, "This app build does not allow external engines.")
+        }
+        guard PrivacySettings.externalMediaEnginesEnabled() else {
+            return (false, "External engines are installed but disabled. Enable them from the Playback menu.")
+        }
+        if AppSecurityPolicy.allowsUnverifiedExternalEnginesForDevelopment {
+            return (true, "Debug-only unverified engine override is enabled.")
+        }
+
+        let trustedTeamIDs = AppSecurityPolicy.trustedExternalEngineTeamIDs
+        guard !trustedTeamIDs.isEmpty else {
+            return (false, "No trusted external engine Team IDs are configured for this build.")
+        }
+
+        guard let teamID else {
+            return (false, "Code signature validation failed before a Team ID could be read.")
+        }
+        guard trustedTeamIDs.contains(teamID) else {
+            return (false, "Engine Team ID \(teamID) is not in the configured trusted list: \(trustedTeamIDs.sorted().joined(separator: ", ")).")
+        }
+
+        do {
+            try CodeSignatureVerifier.verifyStrictCodeSignature(forCodeAt: target)
+            try CodeSignatureVerifier.assessGatekeeperExecute(for: target)
+            return (true, "Code signature, Gatekeeper, user opt-in, and configured Team ID checks passed.")
+        } catch {
+            return (false, "Code signature or Gatekeeper validation failed: \(error.localizedDescription)")
+        }
     }
 }

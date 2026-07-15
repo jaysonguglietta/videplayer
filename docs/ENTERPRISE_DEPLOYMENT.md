@@ -8,14 +8,19 @@ Video Player now includes an enterprise operations layer for managed Mac fleets:
 - Help > Release Readiness checks Developer ID configuration, external-engine build mode, update manifest readiness, license public key state, support redaction, selected update channel, Sparkle appcast readiness, and current code-signature status.
 - Help > Playback Diagnostics inspects the selected media item and reports the native playback route, detected codecs, external-engine availability, DNS pinning data for streams, license state, and recommended action.
 - Help > Playback Engine Doctor inspects VLC/libVLC and mpv candidate paths, accessibility, Team ID, Gatekeeper/code-signature trust, user opt-in, and policy status.
+- Help > Playback Engine Setup Assistant combines build state, engine trust details, discovered Team IDs, and the recommended next step for advanced codec enablement.
+- Help > Export Fleet Diagnostics JSON writes a machine-readable report with app/build state, selected media, playlist count, library summary, policy, license, release readiness, recovery state, and subtitle preferences.
+- Help > Recovery Report shows whether the previous app session ended cleanly, the last playback item, and the last main-thread watchdog warning.
 - Help > Export MDM Policy Profile writes a `.mobileconfig` with the current enterprise policy values.
-- Help > Export Support Bundle creates a support folder with `support-report.txt`, `playback-diagnostics.txt`, and optionally a redacted `video-player.log`. If `EnterpriseSupportUploadURL` is configured, users can upload the bundle to that endpoint.
+- Help > Export Support Bundle creates a support folder with `support-report.txt`, `playback-diagnostics.txt`, `operation-timeline.txt`, and optionally a redacted `video-player.log`. If `EnterpriseSupportUploadURL` is configured, users can upload the bundle to that endpoint.
 - Help > License Status shows the installed enterprise license record.
 - Help > Import Enterprise License installs a signed license JSON into the user's Application Support folder.
 - Help > Create License Activation Request creates an offline activation request JSON with the app version, bundle ID, machine hash, requester, and license key.
 - Help > Deactivate Enterprise License removes the local license file from the Mac.
 - File > Manage Library Folders lets users review, rescan, or remove saved media folders when playback history is enabled.
-- File > Library Report summarizes playlist size, stream count, missing local files, favorites, watched items, and tag counts.
+- File > Browse Media Library opens the searchable SQLite-backed index with continue-watching, favorites, unwatched, streams, and missing-file views.
+- File > Library Report summarizes playlist size, stream count, missing local files, favorites, watched items, tag counts, quality buckets, TV episode groups, and duplicate/version groups.
+- File > Save Current Stream Bookmark and File > Open Stream Bookmark let users persist approved stream sources when history saving is enabled.
 - File > Toggle Favorite, Mark Watched, Mark Unwatched, and Set Tags provide basic enterprise library curation.
 
 ## Managed Preferences
@@ -36,8 +41,10 @@ Deploy these keys in the `com.jaysonguglietta.videoplayer` preference domain thr
 | `EnterpriseAllowedStreamHostSuffixes` | array or comma-separated string | empty | Restricts network stream hosts to exact domains or subdomains of the listed suffixes. |
 | `EnterpriseKioskModeEnabled` | boolean | false | Disables file browsing, playlist import/export, network stream entry, and library edits; optionally loads a managed kiosk playlist. |
 | `EnterpriseKioskPlaylistURL` | string | empty | Local file URL/path or stream URL to load when kiosk mode is enabled. |
-| `EnterpriseSupportUploadURL` | string | empty | HTTPS endpoint for optional multipart support bundle uploads. |
-| `EnterpriseUpdateChannel` | string | `github` | Supported values: `github`, `sparkle`, or `mdm`. |
+| `EnterpriseSupportUploadURL` | string | empty | HTTPS endpoint for optional multipart support bundle uploads. The app rejects HTTP, embedded credentials, literal private/local hosts, and DNS results that resolve to private/local addresses. |
+| `EnterpriseSupportUploadHostSuffixes` | array or comma-separated string | empty | Optional allow-list for approved support upload host suffixes. Configure this when support uploads are enabled. |
+| `EnterpriseSupportUploadTokenKeychainService` | string | empty | Optional Keychain generic-password service name containing the bearer token used for authenticated support uploads. The app first looks for account equal to the app bundle ID, then falls back to any account for the service. |
+| `EnterpriseUpdateChannel` | string | `github` | Supported values: `github`, `github-stable`, `github-beta`, `sparkle`, or `mdm`. Stable excludes prereleases; beta includes cryptographically verified prereleases. |
 | `EnterpriseSparkleAppcastURL` | string | empty | Sparkle appcast URL for future Sparkle 2 migration readiness checks. |
 
 Example local test policy:
@@ -104,14 +111,23 @@ Support bundles are folders created under a user-selected destination. They are 
 - `support-report.txt`: app version, macOS, sandbox/container hint, selected media summary, license status, and active policy.
 - `playback-diagnostics.txt`: selected media route, codec assessment, external engine status, DNS pinning details, and next action.
 - `video-player.log`: optional rotating app log, omitted when disabled by policy or user choice.
+- `operation-timeline.txt`: bounded playback-startup, library-scan, and watchdog events for sequencing freeze investigations.
 
 Redaction is on by default and removes home-folder paths, volume paths, stream credentials, and common URL token parameters. Keep redaction enabled unless support is working on a local filesystem bug that requires exact paths.
 
+## Fleet Diagnostics JSON
+
+Fleet diagnostics are intended for help desk, inventory, and managed deployment review. The JSON export includes app version, macOS, selected media, playlist count, current playback engine, external-engine trust configuration, enterprise policy summary, license status, release-readiness checks, library summary, recovery state, and subtitle preferences. It is designed to be safe to attach to tickets because stream URLs are persisted through the same redaction path used for history and support reports.
+
 ## Update Management
 
-The app's built-in updater remains GitHub Release based and requires a signed manifest, SHA-256 validation, Developer ID Team ID verification, and Gatekeeper assessment. Enterprises that distribute Video Player through MDM can set `EnterpriseDisableUpdateChecks=true` and deploy updates through their software management system instead.
+The app's built-in updater remains GitHub Release based and requires a signed manifest, SHA-256 validation, Developer ID Team ID verification, and Gatekeeper assessment. `github-stable` excludes prereleases and `github-beta` accepts prereleases that satisfy the same verification chain. Enterprises that distribute Video Player through MDM can set `EnterpriseUpdateChannel=mdm` or `EnterpriseDisableUpdateChecks=true` and deploy updates through their software management system instead.
 
 `EnterpriseUpdateChannel=sparkle` is available as a Sparkle-ready managed setting and Release Readiness check. It reports the configured appcast and intentionally keeps the signed GitHub updater in place until the Sparkle 2 framework and sandbox XPC services are bundled and tested. This avoids downgrading the current signed-manifest security posture during migration.
+
+## Data Protection and Retention
+
+Playback history is off by default. When enabled, indexed media, curation state, resume positions, and per-media profiles are stored in `Library.sqlite3` under the app's Application Support container. User-approved library folders are represented by security-scoped bookmarks. Optional HTTPS/RTSPS stream credentials are stored per host in the macOS Keychain with device-only accessibility and are injected only into the playback request. Clearing history removes the library records, bookmarks, profiles, positions, and saved metadata; Settings also provides an explicit Remove Stream Credentials action.
 
 ## Kiosk Mode
 
@@ -119,11 +135,15 @@ Kiosk mode is intended for classrooms, training rooms, retail displays, and lock
 
 ## Support Uploads
 
-Set `EnterpriseSupportUploadURL` to an HTTPS endpoint to let users upload support bundles after export. Uploads use `multipart/form-data` with the redacted text files from the generated support bundle. Keep `EnterpriseRedactSupportBundles=true` unless support explicitly needs exact local paths.
+Set `EnterpriseSupportUploadURL` to an HTTPS endpoint to let users upload support bundles after export. Uploads use `multipart/form-data` with the redacted text files from the generated support bundle. The endpoint must resolve to public addresses and cannot include embedded credentials. Configure `EnterpriseSupportUploadHostSuffixes` to the support domains your organization owns.
+
+For authenticated uploads, store the bearer token as a generic password in Keychain and set `EnterpriseSupportUploadTokenKeychainService` to that service name. The app first searches for a generic password item with service equal to that value and account equal to the bundle ID, then falls back to the service alone. Keep `EnterpriseRedactSupportBundles=true` unless support explicitly needs exact local paths.
 
 ## Recommended Enterprise Defaults
 
 - Keep `EnterpriseRedactSupportBundles=true`.
+- Configure `EnterpriseSupportUploadURL` only to an authenticated public HTTPS endpoint that your organization controls.
+- Set `EnterpriseSupportUploadHostSuffixes` and `EnterpriseSupportUploadTokenKeychainService` whenever support uploads are enabled.
 - Keep playback history disabled unless resume/library persistence is an approved user workflow.
 - Keep private/local streams blocked unless the deployment explicitly supports internal cameras or LAN media servers.
 - Use `EnterpriseAllowedStreamHostSuffixes` for kiosk, classroom, or call-center deployments that should only play approved streaming domains.

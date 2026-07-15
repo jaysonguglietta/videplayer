@@ -20,7 +20,9 @@ enum NetworkStreamValidator {
             let scheme = url.scheme?.lowercased(),
             allowedSchemes.contains(scheme),
             let host = url.host,
-            !host.isEmpty
+            !host.isEmpty,
+            url.user == nil,
+            url.password == nil
         else {
             return nil
         }
